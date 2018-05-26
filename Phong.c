@@ -9,6 +9,16 @@
 #define GetVoxelIndex(s,v) ((v.x)+(s)->tby[(v.y)]+(s)->tbz[(v.z)])
 
 
+typedef struct _phong_model {
+  float      ka;     
+  float      kd;     
+  float      ks;     
+  float      ns;     
+  iftVector *normal; 
+  float     *Idist;  
+  int        ndists; 
+} PhongModel; 
+
 int RADIUS_THRESHOLD=2;
 
 
@@ -161,6 +171,58 @@ int DDA(iftImage *img, iftVoxel p1, iftVoxel pn)
 }
 
 
+PhongModel *CreatePhongModel(iftImage *scene)
+{
+    PhongModel *phong = (PhongModel *)calloc(1, sizeof(PhongModel));
+
+    phong->ka     = 0.1;
+    phong->kd     = 0.7;
+    phong->ks     = 0.2;
+    phong->ns     = 5.0;
+    phong->normal = CreateNormalTable();
+    phong->ndists = (int)(2.0 * FDiagonalSize(scene) + 1);
+    phong->Idist  = AllocFloatArray(phong->ndists);
+
+    for (int d = 0; d < phong->ndists; d++)
+        phong->Idist[d] = (float)0.8 * (phong->ndists - d) / (float)phong->ndists + 0.2;
+
+    return (phong);
+}
+
+GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel)
+{
+    GraphicalContext *gc;
+    
+    gc = (GraphicalContext *) calloc(1, sizeof(GraphicalContext));
+    
+    gc->scene          = iftCopyImage(scene);
+    //gc->phong          = CreatePhongModel(scene);
+    gc->viewdir        = NULL;
+    gc->proj_mode      = RAYCASTING;
+    gc->nobjs          = 0;
+    gc->overall_opac   = 1.0;
+    gc->face           = (Plane *) malloc(sizeof(Plane) * 6);
+    //SetViewDir(gc, 0, 0);
+    //SetSceneFaces(gc);
+    
+    if (label != NULL)  /* for surface rendering */
+    {
+        gc->label       = iftCopyImage(label);
+        gc->object      = CreateObjectAttributes(label, &gc->nobjs);
+        gc->surf_render = CreateSRBuffers(label);
+    }
+    else   /* for volume rendering */
+    {
+        gc->label       = NULL;
+        gc->object      = NULL;
+        gc->surf_render = NULL;
+    }
+    
+    gc->opacity       = NULL;
+    gc->normal        = NULL;
+    
+    return (gc);
+}
 
 
 iftVector columnVectorMatrixToVector(iftMatrix *m)
