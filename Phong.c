@@ -1,25 +1,70 @@
 #include <stdio.h>
 #include "ift.h"
 
+#define  NUM_NORMALS    65161
+
 #define GetXCoord(s,p) (((p) % (((s)->xsize)*((s)->ysize))) % (s)->xsize)
 #define GetYCoord(s,p) (((p) % (((s)->xsize)*((s)->ysize))) / (s)->xsize)
 #define GetZCoord(s,p) ((p) / (((s)->xsize)*((s)->ysize)))
 
+
 #define ROUND(x) ((x < 0)?(int)(x-0.5):(int)(x+0.5))
 #define GetVoxelIndex(s,v) ((v.x)+(s)->tby[(v.y)]+(s)->tbz[(v.z)])
 
+int RADIUS_THRESHOLD=2;
 
-typedef struct _phong_model {
+typedef struct phong_model {
   float      ka;     
   float      kd;     
   float      ks;     
   float      ns;     
+  int        ndists; 
   iftVector *normal; 
   float     *Idist;  
-  int        ndists; 
 } PhongModel; 
 
-int RADIUS_THRESHOLD=2;
+typedef struct plane {
+  iftPoint  pos;    
+  iftVector normal; 
+} Plane;
+
+typedef struct _surface_rendering_buffers {
+  float  depth;         /* distance to the viewing plane, whose center
+         is initially positioned at
+         (diag/2,diag/2,-diag/2) */ 
+  float  opacity;       /* accumulated opacity of the voxels projected
+         onto the viewing plane */
+  int    voxel;         /* voxels in the scene that have been projected
+         onto the viewing plane */
+  int    object;        /* object in the scene whose voxel has been
+         projected onto the viewing plane */
+} SRBuffers;
+
+typedef struct object_attr {
+  float opacity;          
+  float green;
+  float red;
+  float blue; 
+  char visibility;        
+} ObjectAttributes; 
+
+
+typedef struct gc {
+  ObjectAttributes *object;       
+  int               numberOfObjects;
+  float             overall_opac; 
+  char              proj_mode;    
+  PhongModel       *phong;        
+  //ViewDir          *viewdir;      
+  SRBuffers        *surf_render;  
+  iftImage         *scene;        
+  iftImage         *label;        
+  Plane            *face;         
+  iftImage         *normal;       
+  iftImage         *opacity;      
+} GraphicalContext;
+
+
 
 
 int VoxelValue(iftImage *img, iftVoxel v)
@@ -50,6 +95,12 @@ int isValidPoint(iftImage *img, iftVoxel u)
         return 0;
     }
 }
+
+int diagonalSize(iftImage *img)
+{
+    return ROUND(sqrt((double) (img->xsize * img->xsize) + (img->ysize * img->ysize) + (img->zsize * img->zsize)));
+}
+
 
 float MatrixInnerProduct(iftMatrix *A, iftMatrix *B)
 {
@@ -135,31 +186,11 @@ int DDA(iftImage *img, iftVoxel p1, iftVoxel pn)
     p.y = p1.y;
     p.z = p1.z;
 
-    int validP=0;
+    //int validP=0;
     for (k = 1; k < n; k++)
     {
-        //printf("debug\n");
-        //J+=  (float)LinearInterpolationValue(img, px, py);
-        //J+=  iftImgVal2D(img, (int)px, (int)py);
-
         if (isValidPoint(img,p)){
 
-
-          //J= iftImgVal(img,p.x,p.y,p.z);
-
-          iftPoint aux;
-          aux.x = p.x;
-          aux.y = p.y;
-          aux.z = p.z;
-          max = iftImageValueAtPoint(img,aux);
-          break;
-
-          // pegando o ponto com interpolacao
-          J= iftImageValueAtPoint(img,aux);
-
-          if (J>max)
-            max=J;
-          validP++;
         }
 
         p.x = p.x + dx;
@@ -170,23 +201,137 @@ int DDA(iftImage *img, iftVoxel p1, iftVoxel pn)
     return (int)max;
 }
 
-
-PhongModel *CreatePhongModel(iftImage *scene)
+iftVector *createNormalTable()
 {
-    PhongModel *phong = (PhongModel *)calloc(1, sizeof(PhongModel));
+    int        i, gamma, alpha;
+    float      gamma_rad, alpha_rad;
+    iftVector *normaltable;
+
+    /* creates normal look-up table */
+
+    normaltable = (iftVector *)calloc(NUM_OF_NORMALS, sizeof(iftVector));
+
+    normaltable[0].x = 0.0;
+    normaltable[0].y = 0.0;
+    normaltable[0].z = 0.0;
+
+    i = 1;
+    for (gamma = -90; gamma <= 90; gamma++)
+    {
+        gamma_rad = (PI * gamma) / 180.0;
+        for (alpha = 0; alpha < 360; alpha++)
+        {
+            alpha_rad = (PI * alpha) / 180.0;
+            normaltable[i].x = cos(gamma_rad) * cos(alpha_rad);
+            normaltable[i].y = cos(gamma_rad) * sin(alpha_rad);
+            normaltable[i].z = sin(gamma_rad);
+            i++;
+        }
+    }
+
+    return (normaltable);
+}
+
+PhongModel *createPhongModel(iftImage *scene)
+{
+    PhongModel *phong = (PhongModel *) malloc(sizeof(PhongModel) * 6);
 
     phong->ka     = 0.1;
     phong->kd     = 0.7;
     phong->ks     = 0.2;
     phong->ns     = 5.0;
-    phong->normal = CreateNormalTable();
-    phong->ndists = (int)(2.0 * FDiagonalSize(scene) + 1);
-    phong->Idist  = AllocFloatArray(phong->ndists);
+    phong->normal = createNormalTable();
+    phong->ndists = (int)(2.0 * diagonalSize(scene) + 1);
+    phong->Idist  = (float *) malloc(phong->ndists*sizeof(float));
+
+
 
     for (int d = 0; d < phong->ndists; d++)
         phong->Idist[d] = (float)0.8 * (phong->ndists - d) / (float)phong->ndists + 0.2;
 
     return (phong);
+}
+
+int MaximumValue(iftImage *img)
+{
+    int p, Imax = -999999999;
+
+    for (p = 0; p < img->n; p++)
+        if (img->val[p] > Imax)
+            Imax = img->val[p];
+
+    return Imax;
+}
+
+ObjectAttributes *createObjectAttr(iftImage *label, int *numberOfObjects)
+{
+    ObjectAttributes *object;
+    *numberOfObjects = MaximumValue(label);
+
+    object = (ObjectAttributes *)calloc(*numberOfObjects + 1, sizeof(ObjectAttributes));
+
+    object[0].opacity    = 0;
+    object[0].red        = 0;
+    object[0].green      = 0;
+    object[0].blue       = 0;
+    object[0].visibility = 0;
+
+    /* default for objects */
+
+    for (int i = 1; i <= *numberOfObjects; i++)
+    {
+        object[i].opacity    = 1;
+        object[i].red        = 1;
+        object[i].green      = 1;
+        object[i].blue       = 1;
+        object[i].visibility = 1;
+    }
+
+    return (object);
+}
+
+void setSceneFaces(GraphicalContext *gc)
+{
+    iftImage *scene = gc->scene;
+
+    gc->face[0].pos.x = scene->xsize / 2.0;
+    gc->face[0].pos.y = scene->ysize / 2.0;
+    gc->face[0].pos.z = 0;
+    gc->face[1].pos.x = scene->xsize / 2.0;
+    gc->face[1].pos.y = scene->ysize / 2.0;
+    gc->face[1].pos.z = scene->zsize - 1;
+    gc->face[2].pos.x = scene->xsize / 2.0;
+    gc->face[2].pos.y = 0;
+    gc->face[2].pos.z = scene->zsize / 2.0;
+    gc->face[3].pos.x = scene->xsize / 2.0;
+    gc->face[3].pos.y = scene->ysize - 1;
+    gc->face[3].pos.z = scene->zsize / 2.0;
+    gc->face[4].pos.x = 0;
+    gc->face[4].pos.y = scene->ysize / 2.0;
+    gc->face[4].pos.z = scene->zsize / 2.0;
+    gc->face[5].pos.x = scene->xsize - 1;
+    gc->face[5].pos.y = scene->ysize / 2.0;
+    gc->face[5].pos.z = scene->zsize / 2.0;
+
+    gc->face[0].normal.x =  0;
+    gc->face[0].normal.y =  0;
+    gc->face[0].normal.z = -1;
+    gc->face[1].normal.x =  0;
+    gc->face[1].normal.y =  0;
+    gc->face[1].normal.z =  1;
+    gc->face[2].normal.x =  0;
+    gc->face[2].normal.y = -1;
+    gc->face[2].normal.z =  0;
+    gc->face[3].normal.x =  0;
+    gc->face[3].normal.y =  1;
+    gc->face[3].normal.z =  0;
+    gc->face[4].normal.x = -1;
+    gc->face[4].normal.y =  0;
+    gc->face[4].normal.z =  0;
+    gc->face[5].normal.x =  1;
+    gc->face[5].normal.y =  0;
+    gc->face[5].normal.z =  0;
+
 }
 
 GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel)
@@ -196,27 +341,17 @@ GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel)
     gc = (GraphicalContext *) calloc(1, sizeof(GraphicalContext));
     
     gc->scene          = iftCopyImage(scene);
-    //gc->phong          = CreatePhongModel(scene);
-    gc->viewdir        = NULL;
-    gc->proj_mode      = RAYCASTING;
-    gc->nobjs          = 0;
+    gc->phong          = createPhongModel(scene);
+    //gc->viewdir        = NULL;
+    gc->numberOfObjects= 0;
     gc->overall_opac   = 1.0;
     gc->face           = (Plane *) malloc(sizeof(Plane) * 6);
-    //SetViewDir(gc, 0, 0);
-    //SetSceneFaces(gc);
+    //setViewDir(gc, 0, 0);
+    setSceneFaces(gc);
     
-    if (label != NULL)  /* for surface rendering */
-    {
-        gc->label       = iftCopyImage(label);
-        gc->object      = CreateObjectAttributes(label, &gc->nobjs);
-        gc->surf_render = CreateSRBuffers(label);
-    }
-    else   /* for volume rendering */
-    {
-        gc->label       = NULL;
-        gc->object      = NULL;
-        gc->surf_render = NULL;
-    }
+    gc->label       = iftCopyImage(imageLabel);
+    gc->object      = createObjectAttr(imageLabel, &gc->numberOfObjects);
+    //gc->surf_render = createSRBuffers(imageLabel);
     
     gc->opacity       = NULL;
     gc->normal        = NULL;
@@ -352,89 +487,7 @@ int LinearInterpolationValue(iftImage *img, float x, float y, float z)
     return Pi;
 }
 
-iftVolumeFaces* createVF(iftImage* I)
-{
-  int Nx = I->xsize;
-  int Ny = I->ysize;
-  int Nz = I->zsize;
-  int i;
 
-  iftVolumeFaces *vf = (iftVolumeFaces *) malloc(sizeof(iftVolumeFaces) * 6);
-
-  for (i = 0; i < 6; i++)
-  {
-      vf[i].orthogonal = iftCreateMatrix(1, 4);
-      vf[i].center = iftCreateMatrix(1, 4);
-  }
-
-  // Face of Plane XY
-  vf[0].orthogonal->val[0] = 0;
-  vf[0].orthogonal->val[1] = 0;
-  vf[0].orthogonal->val[2] = -1;
-  vf[0].orthogonal->val[3] = 1;
-
-  vf[0].center->val[0] = Nx / 2;
-  vf[0].center->val[1] = Ny / 2;
-  vf[0].center->val[2] = 0;
-  vf[0].center->val[3] = 1;
-
-  // Face of Plane XZ
-  vf[1].orthogonal->val[0] = 0;
-  vf[1].orthogonal->val[1] = -1;
-  vf[1].orthogonal->val[2] = 0;
-  vf[1].orthogonal->val[3] = 1;
-
-  vf[1].center->val[0] = Nx / 2;
-  vf[1].center->val[1] = 0;
-  vf[1].center->val[2] = Nz / 2;
-  vf[1].center->val[3] = 1;
-
-  // Face of Plane YZ
-  vf[2].orthogonal->val[0] = -1;
-  vf[2].orthogonal->val[1] = 0;
-  vf[2].orthogonal->val[2] = 0;
-  vf[2].orthogonal->val[3] = 1;
-
-  vf[2].center->val[0] = 0;
-  vf[2].center->val[1] = Ny / 2;
-  vf[2].center->val[2] = Nz / 2;
-  vf[2].center->val[3] = 1;
-
-  // Face of Opposite Plane XY
-  vf[3].orthogonal->val[0] = 0;
-  vf[3].orthogonal->val[1] = 0;
-  vf[3].orthogonal->val[2] = 1;
-  vf[3].orthogonal->val[3] = 1;
-
-  vf[3].center->val[0] = Nx / 2;
-  vf[3].center->val[1] = Ny / 2;
-  vf[3].center->val[2] = Nz - 1;
-  vf[3].center->val[3] = 1;
-
-  // Face of Opposite Plane XZ
-  vf[4].orthogonal->val[0] = 0;
-  vf[4].orthogonal->val[1] = 1;
-  vf[4].orthogonal->val[2] = 0;
-  vf[4].orthogonal->val[3] = 1;
-
-  vf[4].center->val[0] = Nx / 2;
-  vf[4].center->val[1] = Ny - 1;
-  vf[4].center->val[2] = Nz / 2;
-  vf[4].center->val[3] = 1;
-
-  // Face of Opposite Plane YZ
-  vf[5].orthogonal->val[0] = 1;
-  vf[5].orthogonal->val[1] = 0;
-  vf[5].orthogonal->val[2] = 0;
-  vf[5].orthogonal->val[3] = 1;
-
-  vf[5].center->val[0] = Nx-1;
-  vf[5].center->val[1] = Ny / 2;
-  vf[5].center->val[2] = Nz / 2;
-  vf[5].center->val[3] = 1;
-
-  return vf;
-}
 
 void DestroyVF(iftVolumeFaces *vf)
 {
@@ -473,88 +526,32 @@ iftMatrix *imagePixelToMatrix(iftImage *img, int p)
 
 
 
-iftImage *MaximumIntensityProjection(iftImage *img, float xtheta, float ytheta)
-{
-    float diagonal = 0;
-    double maxIntensity;
-    int p=0;
-    int Nu, Nv;
-    iftVoxel p1, pn;
-
-    iftVolumeFaces* volumeFaces;
-    iftMatrix *Mtemp, *T;
-    iftMatrix *Norigin, *Tnorigin;
-    iftMatrix *Tpo;
-
-    diagonal = sqrt((img->xsize * img->xsize) + (img->ysize * img->ysize) + (img->zsize * img->zsize));
-    Nu = Nv = diagonal;
-    iftImage *output = iftCreateImage(Nu, Nv, 1);
-    T  = createTransformationMatrix(img, xtheta, ytheta);
-    //iftPrintMatrix(T);
-
-    Norigin =  iftCreateMatrix(1, 4);
-    iftMatrixElem(Norigin, 0, 0) = 0;
-    iftMatrixElem(Norigin, 0, 1) = 0;
-    iftMatrixElem(Norigin, 0, 2) = -1;
-    iftMatrixElem(Norigin, 0, 3) = 0;
-    //iftPrintMatrix(Norigin);
-
-    Tnorigin = iftMultMatrices(T, Norigin);
-
-    volumeFaces = createVF(img);
-
-    for (p = 0; p < output->n; p++)
-    {
-        Mtemp = imagePixelToMatrix(output,p);
-        iftMatrixElem(Mtemp, 0, 2) = diagonal/2;
-
-
-
-        Tpo = iftMultMatrices(T, Mtemp);
-
-        if (ComputeIntersection(Tpo, img, Tnorigin, volumeFaces, &p1, &pn))
-        {
-            maxIntensity  = DDA(img,p1,pn);
-
-            output->val[p] = maxIntensity;
-        }
-
-
-        iftDestroyMatrix(&Mtemp);
-        iftDestroyMatrix(&Tpo);
-    }
-
-    iftDestroyMatrix(&T);
-    iftDestroyMatrix(&Norigin);
-    iftDestroyMatrix(&Tnorigin);
-    DestroyVF(volumeFaces);
-
-    return output;
-}
-
 
 int main(int argc, char *argv[])
 {
     //if (argc != 6)
     //    Error("Run: ./main <filename> <output> <xtheta> <ytheta> , "main");
 
-    char buffer[512];
+    //char buffer[512];
 
-    float tx, ty;
-    tx = atof(argv[3]);
-    ty = atof(argv[4]);
-    //tz = atof(argv[5]);
+    //float tx, ty;
+    GraphicalContext *gc;
     char *imgFileName = iftCopyString(argv[1]);
+    char *imgLabelFileName = iftCopyString(argv[2]);
     iftImage *img = iftReadImageByExt(imgFileName);
+    iftImage *imgLabel = iftReadImageByExt(imgLabelFileName);
+    //tx = atof(argv[4]);
+    //ty = atof(argv[5]);
+    
+    //iftImage *output = NULL;
 
-    iftImage *output = NULL;
+    gc = createGC(img, imgLabel);
+    printf("Done!\n");
+    // sprintf(buffer, "data/%.1f%.1f%s", tx, ty, argv[2]);
+    // iftImage *normalizedImage= iftNormalize(output,0,255);
 
-    output = MaximumIntensityProjection(img, tx, ty);
-    sprintf(buffer, "data/%.1f%.1f%s", tx, ty, argv[2]);
-    iftImage *normalizedImage= iftNormalize(output,0,255);
-
-    iftWriteImageByExt(normalizedImage, buffer);
-    iftDestroyImage(&img);
-    iftDestroyImage(&output);
+    // iftWriteImageByExt(normalizedImage, buffer);
+    // iftDestroyImage(&img);
+    // iftDestroyImage(&output);
     return 0;
 }
