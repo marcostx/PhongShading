@@ -139,7 +139,7 @@ int DDA(iftImage *img, iftVoxel p1, iftVoxel pn)
     int n, k;
     iftVoxel v;
     iftVoxel p;
-    float J=0, max=0;
+    float max=0;
     int Dx,Dy,Dz;
     float dx=0,dy=0,dz=0;
     //iftCreateMatrix* J;
@@ -366,11 +366,70 @@ iftVector columnVectorMatrixToVector(iftMatrix *m)
 }
 
 
+iftVector columnVectorVoxelToVector(iftVoxel *m)
+{
+    iftVector v = {.x = m->x, .y = m->y, .z = m->z};
+    v.x = iftAlmostZero(v.x) ? 0.0 : v.x;
+    v.y = iftAlmostZero(v.y) ? 0.0 : v.y;
+    v.z = iftAlmostZero(v.z) ? 0.0 : v.z;
+
+    return v;
+}
+
+
 int computeIntersection(GraphicalContext* gc, iftMatrix *Tpo, iftMatrix *Tn, iftVoxel *p1, iftVoxel *pn)
 {
 
-    
-      return 0;
+    //float max=, min=9999999.9;
+    int i;
+    p1->x=pn->x=p1->y=pn->y,p1->z=pn->z=0;
+    float lambda, l1=9999999.9, ln=-9999999.9;
+    float innerP = 0, innerPV=0;
+    iftVector v1, v2, v3;
+    iftVoxel* V, P; 
+
+    for (i = 0; i < 6; i++) {
+        v1 = gc->face[i].normal;
+        v2 = columnVectorMatrixToVector(Tn);
+        innerP = iftVectorInnerProduct(v1,v2);
+
+        if (fabs(innerP) > 1E-04)
+        {
+            V->x     = gc->face[i].pos.x - Tpo->val[0];
+            V->y     = gc->face[i].pos.y - Tpo->val[1];
+            V->z     = gc->face[i].pos.z - Tpo->val[2];
+
+            v3 = columnVectorVoxelToVector(V);
+            innerPV = iftVectorInnerProduct(v1, v3);
+            lambda= innerPV / innerP;
+            P.x = ROUND(Tpo->val[0] + lambda * Tn->val[0]);
+            P.y = ROUND(Tpo->val[1] + lambda * Tn->val[1]);
+            P.z = ROUND(Tpo->val[2] + lambda * Tn->val[2]);
+            if (isValidPoint(gc->scene, P))
+            {
+              if (lambda < l1)
+                    l1 = lambda;
+              if (lambda > ln)
+                    ln = lambda;
+            }   
+        }
+    }
+
+    if (l1 < ln)
+    {
+
+        p1->x = ROUND(Tpo->val[0] + l1 * Tn->val[0]);
+        p1->y = ROUND(Tpo->val[1] + l1 * Tn->val[1]);
+        p1->z = ROUND(Tpo->val[2] + l1 * Tn->val[2]);
+
+        pn->x = ROUND(Tpo->val[0] + ln * Tn->val[0]);
+        pn->y = ROUND(Tpo->val[1] + ln * Tn->val[1]);
+        pn->z = ROUND(Tpo->val[2] + ln * Tn->val[2]);
+
+        return 1;
+    }
+    return 0;
+
 }
 
 
