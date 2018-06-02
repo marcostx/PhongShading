@@ -23,10 +23,12 @@ typedef struct phong_model {
   float     *Idist;
 } PhongModel;
 
-typedef struct plane {
-  iftPoint  pos;
-  iftVector normal;
-} Plane;
+
+typedef struct volume
+{
+    iftMatrix* normal;
+    iftMatrix* center;
+}iftVolumeFaces;
 
 typedef struct object_attr {
   float opacity;
@@ -47,7 +49,7 @@ typedef struct gc {
   iftVector        vDir;         
   iftImage         *scene;
   iftImage         *label;
-  Plane            *face;
+  iftVolumeFaces   *faces;
   iftImage         *normal;
   iftImage         *opacity;
 } GraphicalContext;
@@ -66,12 +68,6 @@ int sign( int x ){
     return -1;
 }
 
-typedef struct volume
-{
-    iftMatrix* orthogonal;
-    iftMatrix* center;
-}iftVolumeFaces;
-
 int isValidPoint(iftImage *img, iftVoxel u)
 {
     if ((u.x >= 0) && (u.x < img->xsize) &&
@@ -82,6 +78,29 @@ int isValidPoint(iftImage *img, iftVoxel u)
     else{
         return 0;
     }
+}
+
+iftColor RGBtoYCbCr(iftColor cin)
+{
+    iftColor cout;
+
+    cout.val[0] = (int)(0.257 * (float)cin.val[0] +
+                        0.504 * (float)cin.val[1] +
+                        0.098 * (float)cin.val[2] + 16.0);
+    cout.val[1] = (int)(-0.148 * (float)cin.val[0] +
+                        -0.291 * (float)cin.val[1] +
+                        0.439 * (float)cin.val[2] + 128.0);
+    cout.val[2] = (int)(0.439 * (float)cin.val[0] +
+                        -0.368 * (float)cin.val[1] +
+                        -0.071 * (float)cin.val[2] + 128.0);
+
+    for (int i = 0; i < 3; i++)
+    {
+        if (cout.val[i] < 0)   cout.val[i] = 0;
+        if (cout.val[i] > 255) cout.val[i] = 255;
+    }
+
+    return cout;
 }
 
 int diagonalSize(iftImage *img)
@@ -139,13 +158,16 @@ void DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVoxel p1, iftVoxel pn, float* 
     float dx=0, dy=0, dz=0, phong_val, dist;
     iftVector N;
 
+    *red = *green = *blue = 0.0;
 
-    if (p1.x == pn.x && p1.y == pn.y && p1.z == pn.z)
+    if (p1.x == pn.x && p1.y == pn.y && p1.z == pn.z){
         n=1;
+    }
     else{
         Dx=pn.x - p1.x;
         Dy=pn.y - p1.y;
         Dz=pn.z - p1.z;
+
 
         if( abs(Dx) >= abs(Dy) && abs(Dx) >= abs(Dz) ){
             n = abs(Dx)+1;
@@ -170,6 +192,7 @@ void DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVoxel p1, iftVoxel pn, float* 
     p.x = p1.x;
     p.y = p1.y;
     p.z = p1.z;
+    
 
     //int validP=0;
     for (k = 1; k < n; k++)
@@ -177,13 +200,16 @@ void DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVoxel p1, iftVoxel pn, float* 
         v.x=ROUND(p.x);
         v.y=ROUND(p.y);
         v.z=ROUND(p.z);
-        idx = iftGetVoxelIndex(gc->scene, v);
 
+        idx = iftGetVoxelIndex(gc->scene, v);
+        
         
         if (gc->label->val[idx] != 0)
         {
+
             if (gc->object[gc->label->val[idx]].visibility != 0)
             {
+
                 dist =sqrtf((p.x-Tp0->val[0])*(p.x-Tp0->val[0])+(p.y-Tp0->val[1])*(p.y-Tp0->val[1])+(p.z-Tp0->val[2])*(p.z-Tp0->val[2]));
                 
                 N.x  = gc->phong->normal[gc->normal->val[idx]].x;
@@ -195,7 +221,7 @@ void DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVoxel p1, iftVoxel pn, float* 
                 *blue  += phong_val * gc->object[gc->label->val[idx]].blue;
             }
         }
-    
+       
 
         p.x = p.x + dx;
         p.y = p.y + dy;
@@ -256,8 +282,6 @@ PhongModel *createPhongModel(iftImage *scene)
     phong->ndists = (int)(2.0 * diagonalSize(scene) + 1);
     phong->Idist  = (float *) malloc(phong->ndists*sizeof(float));
 
-
-
     for (int d = 0; d < phong->ndists; d++)
         phong->Idist[d] = (float)0.8 * (phong->ndists - d) / (float)phong->ndists + 0.2;
 
@@ -303,51 +327,144 @@ ObjectAttributes *createObjectAttr(iftImage *label, int *numberOfObjects)
     return (object);
 }
 
-void setSceneFaces(GraphicalContext *gc)
-{
+// void setSceneFaces(GraphicalContext *gc)
+// {
+//     iftImage *scene = gc->scene;
+
+//     gc->face[0].pos.x = scene->xsize / 2.0;
+//     gc->face[0].pos.y = scene->ysize / 2.0;
+//     gc->face[0].pos.z = -1;
+
+//     gc->face[1].pos.x = scene->xsize / 2.0;
+//     gc->face[1].pos.y = 0;
+//     gc->face[1].pos.z = scene->zsize / 2.0;
+
+//     gc->face[2].pos.x = 0;
+//     gc->face[2].pos.y = scene->ysize / 2.0;
+//     gc->face[2].pos.z = scene->zsize / 2.0;
+
+
+//     gc->face[3].pos.x = scene->xsize / 2.0;
+//     gc->face[3].pos.y = scene->ysize / 2.0;
+//     gc->face[3].pos.z = scene->zsize - 1;
+
+//     gc->face[4].pos.x = scene->xsize / 2.0;
+//     gc->face[4].pos.y = scene->ysize - 1;
+//     gc->face[4].pos.z = scene->zsize / 2.0;
+
+//     gc->face[5].pos.x = scene->xsize - 1;
+//     gc->face[5].pos.y = scene->ysize / 2.0;
+//     gc->face[5].pos.z = scene->zsize / 2.0;
+
+//     gc->face[0].normal.x =  0;
+//     gc->face[0].normal.y =  0;
+//     gc->face[0].normal.z = -1;
+
+//     gc->face[1].normal.x =  0;
+//     gc->face[1].normal.y =  -1;
+//     gc->face[1].normal.z =  0;
+
+//     gc->face[2].normal.x = -1;
+//     gc->face[2].normal.y =  0;
+//     gc->face[2].normal.z =  0;
+
+//     gc->face[3].normal.x =  0;
+//     gc->face[3].normal.y =  0;
+//     gc->face[3].normal.z =  1;
+
+//     gc->face[4].normal.x =  0;
+//     gc->face[4].normal.y =  1;
+//     gc->face[4].normal.z =  0;
+
+//     gc->face[5].normal.x =  1;
+//     gc->face[5].normal.y =  0;
+//     gc->face[5].normal.z =  0;
+
+// }
+
+iftVolumeFaces* createVF(GraphicalContext* gc){
     iftImage *scene = gc->scene;
+    int Nx = scene->xsize;
+    int Ny = scene->ysize;
+    int Nz = scene->zsize;
 
-    printf("setting\n");
-    gc->face[0].pos.x = scene->xsize / 2.0;
-    gc->face[0].pos.y = scene->ysize / 2.0;
-    gc->face[0].pos.z = 0;
-    gc->face[1].pos.x = scene->xsize / 2.0;
-    gc->face[1].pos.y = scene->ysize / 2.0;
-    gc->face[1].pos.z = scene->zsize - 1;
-    gc->face[2].pos.x = scene->xsize / 2.0;
-    gc->face[2].pos.y = 0;
-    gc->face[2].pos.z = scene->zsize / 2.0;
-    gc->face[3].pos.x = scene->xsize / 2.0;
-    gc->face[3].pos.y = scene->ysize - 1;
-    gc->face[3].pos.z = scene->zsize / 2.0;
-    gc->face[4].pos.x = 0;
-    gc->face[4].pos.y = scene->ysize / 2.0;
-    gc->face[4].pos.z = scene->zsize / 2.0;
-    gc->face[5].pos.x = scene->xsize - 1;
-    gc->face[5].pos.y = scene->ysize / 2.0;
-    gc->face[5].pos.z = scene->zsize / 2.0;
+    iftVolumeFaces *vf = (iftVolumeFaces *) malloc(sizeof(iftVolumeFaces) * 6);
 
-    gc->face[0].normal.x =  0;
-    gc->face[0].normal.y =  0;
-    gc->face[0].normal.z = -1;
-    gc->face[1].normal.x =  0;
-    gc->face[1].normal.y =  0;
-    gc->face[1].normal.z =  1;
-    gc->face[2].normal.x =  0;
-    gc->face[2].normal.y = -1;
-    gc->face[2].normal.z =  0;
-    gc->face[3].normal.x =  0;
-    gc->face[3].normal.y =  1;
-    gc->face[3].normal.z =  0;
-    gc->face[4].normal.x = -1;
-    gc->face[4].normal.y =  0;
-    gc->face[4].normal.z =  0;
-    gc->face[5].normal.x =  1;
-    gc->face[5].normal.y =  0;
-    gc->face[5].normal.z =  0;
+    for (int i = 0; i < 6; i++)
+    {
+        vf[i].normal = iftCreateMatrix(1, 4);
+        vf[i].center = iftCreateMatrix(1, 4);
+    }
+
+     // Face of Plane XY
+  vf[0].normal->val[0] = 0;
+  vf[0].normal->val[1] = 0;
+  vf[0].normal->val[2] = -1;
+  vf[0].normal->val[3] = 1;
+
+  vf[0].center->val[0] = Nx / 2;
+  vf[0].center->val[1] = Ny / 2;
+  vf[0].center->val[2] = 0;
+  vf[0].center->val[3] = 1;
+
+  // Face of Plane XZ
+  vf[1].normal->val[0] = 0;
+  vf[1].normal->val[1] = -1;
+  vf[1].normal->val[2] = 0;
+  vf[1].normal->val[3] = 1;
+
+  vf[1].center->val[0] = Nx / 2;
+  vf[1].center->val[1] = 0;
+  vf[1].center->val[2] = Nz / 2;
+  vf[1].center->val[3] = 1;
+
+  // Face of Plane YZ
+  vf[2].normal->val[0] = -1;
+  vf[2].normal->val[1] = 0;
+  vf[2].normal->val[2] = 0;
+  vf[2].normal->val[3] = 1;
+
+  vf[2].center->val[0] = 0;
+  vf[2].center->val[1] = Ny / 2;
+  vf[2].center->val[2] = Nz / 2;
+  vf[2].center->val[3] = 1;
+
+  // Face of Opposite Plane XY
+  vf[3].normal->val[0] = 0;
+  vf[3].normal->val[1] = 0;
+  vf[3].normal->val[2] = 1;
+  vf[3].normal->val[3] = 1;
+
+  vf[3].center->val[0] = Nx / 2;
+  vf[3].center->val[1] = Ny / 2;
+  vf[3].center->val[2] = Nz - 1;
+  vf[3].center->val[3] = 1;
+
+  // Face of Opposite Plane XZ
+  vf[4].normal->val[0] = 0;
+  vf[4].normal->val[1] = 1;
+  vf[4].normal->val[2] = 0;
+  vf[4].normal->val[3] = 1;
+
+  vf[4].center->val[0] = Nx / 2;
+  vf[4].center->val[1] = Ny - 1;
+  vf[4].center->val[2] = Nz / 2;
+  vf[4].center->val[3] = 1;
+
+  // Face of Opposite Plane YZ
+  vf[5].normal->val[0] = 1;
+  vf[5].normal->val[1] = 0;
+  vf[5].normal->val[2] = 0;
+  vf[5].normal->val[3] = 1;
+
+  vf[5].center->val[0] = Nx-1;
+  vf[5].center->val[1] = Ny / 2;
+  vf[5].center->val[2] = Nz / 2;
+  vf[5].center->val[3] = 1;
+
+  return vf;
 
 }
-
 
 
 
@@ -361,10 +478,9 @@ GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel, float tilt, fl
     gc->scene          = iftCopyImage(scene);
     gc->phong          = createPhongModel(scene);
     
-    gc->numberOfObjects= 0;
-    gc->overall_opac   = 1.0;
-    gc->face           = (Plane *) malloc(sizeof(Plane) * 6);
-    setSceneFaces(gc);
+    gc->numberOfObjects = 0;
+    gc->overall_opac    = 1.0;
+    gc->faces           = createVF(gc);
 
     // computing transformations
     iftVector v1 = {.x = (float)scene->xsize / 2.0, .y = (float)scene->ysize / 2.0, .z = (float)scene->zsize / 2.0};
@@ -377,7 +493,7 @@ GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel, float tilt, fl
     iftVector v2 = {.x = -(D / 2.0), .y = -(D / 2.0), .z = -(D / 2.0)};
     iftMatrix *transMatrix2 = iftTranslationMatrix(v2);
 
-    gc->Tinv = iftMultMatricesChain(3, transMatrix1, xRotMatrix,yRotMatrix, transMatrix2);
+    gc->Tinv = iftMultMatricesChain(4, transMatrix1, xRotMatrix,yRotMatrix, transMatrix2);
 
     gc->label       = iftCopyImage(imageLabel);
     gc->object      = createObjectAttr(imageLabel, &gc->numberOfObjects);
@@ -414,62 +530,86 @@ iftVector columnVectorVoxelToVector(iftVoxel m)
 int computeIntersection(GraphicalContext* gc, iftMatrix *Tpo, iftMatrix *Tn, iftVoxel *p1, iftVoxel *pn)
 {
 
-    //float max=, min=9999999.9;
+    float max=-9999999.9, min=9999999.9;
     int i;
     p1->x=pn->x=p1->y=pn->y,p1->z=pn->z=0;
     float lambda, l1=9999999.9, ln=-9999999.9;
     float innerP = 0, innerPV=0;
+    iftMatrix* Nj = iftCreateMatrix(1,3);
     iftVector v1, v2, v3;
-    iftVoxel V, P; 
+    iftMatrix *V = iftCreateMatrix(1, 3);
+    iftVoxel P; 
 
     for (i = 0; i < 6; i++) {
-        v1 = gc->face[i].normal;
-
+        iftMatrixElem(Nj, 0, 0) = gc->faces[i].normal->val[0];
+        iftMatrixElem(Nj, 0, 1) = gc->faces[i].normal->val[1];
+        iftMatrixElem(Nj, 0, 2) = gc->faces[i].normal->val[2];
+        v1 = columnVectorMatrixToVector(Nj);
         v2 = columnVectorMatrixToVector(Tn);
         innerP = iftVectorInnerProduct(v1,v2);
 
-        if (fabs(innerP) > 1E-04)
+        if (innerP != 0)
         {
 
-            V.x     = gc->face[i].pos.x - Tpo->val[0];
-            V.y     = gc->face[i].pos.y - Tpo->val[1];
-            V.z     = gc->face[i].pos.z - Tpo->val[2];
+            iftMatrixElem(V, 0, 0)     = gc->faces[i].center->val[0] - Tpo->val[0];
+            iftMatrixElem(V, 0, 1)     = gc->faces[i].center->val[1] - Tpo->val[1];
+            iftMatrixElem(V, 0, 2)     = gc->faces[i].center->val[2] - Tpo->val[2];
+            
 
-            v3 = columnVectorVoxelToVector(V);
+            v3 = columnVectorMatrixToVector(V);
             innerPV = iftVectorInnerProduct(v1, v3);
-            lambda= innerPV / innerP;
-            P.x = ROUND(Tpo->val[0] + lambda * Tn->val[0]);
-            P.y = ROUND(Tpo->val[1] + lambda * Tn->val[1]);
-            P.z = ROUND(Tpo->val[2] + lambda * Tn->val[2]);
+            lambda= (float) innerPV / innerP;
+            //printf("%f\n", lambda);
+
+            P.x = Tpo->val[0] + lambda * Tn->val[0];
+            P.y = Tpo->val[1] + lambda * Tn->val[1];
+            P.z = Tpo->val[2] + lambda * Tn->val[2];
             if (isValidPoint(gc->scene, P))
             {
-                if (lambda < l1)
-                    l1 = lambda;
-                if (lambda > ln)
-                    ln = lambda;
+                // if (lambda < l1)
+                //     l1 = lambda;
+                // if (lambda > ln)
+                //     ln = lambda;
+                if (lambda < min){
+                    p1->x = P.x;
+                    p1->y = P.y;
+                    p1->z = P.z;
+                    min = lambda;
+                }
+                if (lambda > max) {
+                    pn->x = P.x;
+                    pn->y = P.y;
+                    pn->z = P.z;
+                    max = lambda;
+                }
             }   
         }
     }
 
-    if (l1 < ln)
-    {
-        printf("entrou\n");
-        p1->x = ROUND(Tpo->val[0] + l1 * Tn->val[0]);
-        p1->y = ROUND(Tpo->val[1] + l1 * Tn->val[1]);
-        p1->z = ROUND(Tpo->val[2] + l1 * Tn->val[2]);
-
-        pn->x = ROUND(Tpo->val[0] + ln * Tn->val[0]);
-        pn->y = ROUND(Tpo->val[1] + ln * Tn->val[1]);
-        pn->z = ROUND(Tpo->val[2] + ln * Tn->val[2]);
-
+    if ((p1->x != -1) && (pn->x != -1)){
+        //printf("%d %d \n", p1->x, pn->x);
+        //exit(1);
         return 1;
     }
-    return 0;
+    else
+        return 0;
+    
+    // if (l1 < ln)
+    // {
+    //     printf("entrou\n");
+    //     p1->x = ROUND(Tpo->val[0] + l1 * Tn->val[0]);
+    //     p1->y = ROUND(Tpo->val[1] + l1 * Tn->val[1]);
+    //     p1->z = ROUND(Tpo->val[2] + l1 * Tn->val[2]);
+
+    //     pn->x = ROUND(Tpo->val[0] + ln * Tn->val[0]);
+    //     pn->y = ROUND(Tpo->val[1] + ln * Tn->val[1]);
+    //     pn->z = ROUND(Tpo->val[2] + ln * Tn->val[2]);
+
+    //     return 1;
+    // }
+    // return 0;
 
 }
-
-
-
 
 iftMatrix *imagePixelToMatrix(iftImage *img, int p)
 {
@@ -481,9 +621,6 @@ iftMatrix *imagePixelToMatrix(iftImage *img, int p)
 
     return pixMat;
 }
-
-
-
 
 iftImage* phongRender(GraphicalContext *gc)
 {
@@ -498,9 +635,9 @@ iftImage* phongRender(GraphicalContext *gc)
 
     iftMatrix* vec = iftCreateMatrix(1, 4);
 
-    iftMatrixElem(vec, 0, 0) = 0;
-    iftMatrixElem(vec, 0, 1) = 0;
-    iftMatrixElem(vec, 0, 2) = 1;
+    iftMatrixElem(vec, 0, 0) =  0;
+    iftMatrixElem(vec, 0, 1) =  0;
+    iftMatrixElem(vec, 0, 2) = -1;
     iftMatrixElem(vec, 0, 3) = 0;
 
     iftMatrix* tVec = iftMultMatrices(gc->Tinv, vec);
@@ -509,8 +646,8 @@ iftImage* phongRender(GraphicalContext *gc)
 
 
     for (int p = 0; p < outputImage->n; p++)
-    {
-        
+    {        
+        printf("Step : %d\n", p);
         Mtemp = imagePixelToMatrix(outputImage,p);
         iftMatrixElem(Mtemp, 0, 2) = diagonal/2;
 
@@ -518,17 +655,20 @@ iftImage* phongRender(GraphicalContext *gc)
 
         if (computeIntersection(gc, Tpo, tVec, &p1, &pn))
         {
-            printf("passou\n");
-
             DDA(gc, Tpo, p1, pn, &r, &g, &b);
 
             RGB.val[0]     = (int)(255.0 * r);
             RGB.val[1]     = (int)(255.0 * g);
             RGB.val[2]     = (int)(255.0 * b);
-            YCbCr          = iftRGBtoYCbCr(RGB,1);
 
-            iftSetYCbCr(outputImage, p, YCbCr);
+            YCbCr          = RGBtoYCbCr(RGB);
 
+            outputImage->val[p] = YCbCr.val[0];
+            iftSetCb(outputImage, YCbCr.val[1]);
+            iftSetCr(outputImage, YCbCr.val[2]);
+            //outputImage->Cb[p] = YCbCr.val[1];
+            //outputImage->Cr[p] = YCbCr.val[2];
+            //iftSetYCbCr(outputImage, p, YCbCr);
         }
     }
 
@@ -538,7 +678,7 @@ iftImage* phongRender(GraphicalContext *gc)
 
 int main(int argc, char *argv[])
 {
-    //char buffer[512];
+    char buffer[512];
 
     float tilt, spin;
     GraphicalContext *gc;
@@ -557,13 +697,12 @@ int main(int argc, char *argv[])
     output   = phongRender(gc);
     printf("Done\n");
     
-    // sprintf(buffer, "data/%.1f%.1f%s", tx, ty, argv[2]);
+    sprintf(buffer, "data/test.png");
 
-
-    // iftImage *normalizedImage= iftNormalize(output,0,255);
-    //
-    // iftWriteImageByExt(normalizedImage, buffer);
-    // iftDestroyImage(&img);
-    // iftDestroyImage(&output);
+    //iftImage *normalizedImage= iftNormalize(output,0,255);
+    
+    iftWriteImageByExt(output, buffer);
+    iftDestroyImage(&img);
+    iftDestroyImage(&output);
     return 0;
 }
