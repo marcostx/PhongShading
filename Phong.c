@@ -28,18 +28,6 @@ typedef struct plane {
   iftVector normal;
 } Plane;
 
-typedef struct _surface_rendering_buffers {
-  float  depth;         /* distance to the viewing plane, whose center
-         is initially positioned at
-         (diag/2,diag/2,-diag/2) */
-  float  opacity;       /* accumulated opacity of the voxels projected
-         onto the viewing plane */
-  int    voxel;         /* voxels in the scene that have been projected
-         onto the viewing plane */
-  int    object;        /* object in the scene whose voxel has been
-         projected onto the viewing plane */
-} SRBuffers;
-
 typedef struct object_attr {
   float opacity;
   float green;
@@ -55,9 +43,8 @@ typedef struct gc {
   float             overall_opac;
   char              proj_mode;
   PhongModel       *phong;
-  iftMatrix        *T;            
-  iftMatrix        *Tinv;         
-  SRBuffers        *surf_render;
+  iftMatrix        *Tinv;
+  iftVector        vDir;         
   iftImage         *scene;
   iftImage         *label;
   Plane            *face;
@@ -113,36 +100,44 @@ iftVoxel GetVoxelCoord(iftImage *img, int p)
     return u;
 }
 
-/* this function creas the rotation/translation matrix for the given theta */
-iftMatrix *createTransformationMatrix(iftImage *img, int xtheta, int ytheta)
+float PhongShading(GraphicalContext *gc, int p, iftVector N, float dist)
 {
-    iftMatrix *resMatrix = NULL;
+    float cos;
+    float cos2, aux, phong_val = 0.0;
+    float thresold=1E-05;
 
-    iftVector v1 = {.x = (float)img->xsize / 2.0, .y = (float)img->ysize / 2.0, .z = (float)img->zsize / 2.0};
-    iftMatrix *transMatrix1 = iftTranslationMatrix(v1);
+    cos  = iftVectorInnerProduct(gc->vDir, N);
+    if (cos > 1.0)
+        cos = 1.0;
 
-    iftMatrix *xRotMatrix = iftRotationMatrix(IFT_AXIS_X, -xtheta);
-    iftMatrix *yRotMatrix = iftRotationMatrix(IFT_AXIS_Y, -ytheta);
+    if (cos > thresold)   // |angle| <= 90° 
+    {
 
-    float D = sqrt(img->xsize*img->xsize + img->ysize*img->ysize);
-    iftVector v2 = {.x = -(D / 2.0), .y = -(D / 2.0), .z = -(D / 2.0)};
-    iftMatrix *transMatrix2 = iftTranslationMatrix(v2);
+        cos2 = 2 * cos * cos - 1;
 
+        if (cos2 <= thresold)   //|angle| >= 45°
+            aux = 0.;
+        else
+        {
+            aux = 1.;
+            for (int k = 0; k < gc->phong->ns; k++)
+                aux = aux * cos2;
+        }
+        phong_val = gc->phong->ka + gc->phong->Idist[(int)dist] * (gc->phong->kd * cos + gc->phong->ks * aux);
+    }
 
-    resMatrix = iftMultMatricesChain(4, transMatrix1, xRotMatrix,yRotMatrix, transMatrix2);
-
-    return resMatrix;
+    return phong_val;
 }
 
-int DDA(iftImage *img, iftVoxel p1, iftVoxel pn)
+void DDA(GraphicalContext* gc, iftVoxel Tp0, iftVoxel p1, iftVoxel pn, float* red, float* green, float* blue)
 {
-    int n, k;
+    int n, k, idx;
     iftVoxel v;
     iftVoxel p;
     float max=0;
     int Dx,Dy,Dz;
-    float dx=0,dy=0,dz=0;
-    //iftCreateMatrix* J;
+    float dx=0, dy=0, dz=0, phong_val, dist;
+    iftVector N;
 
 
     if (p1.x == pn.x && p1.y == pn.y && p1.z == pn.z)
@@ -182,17 +177,39 @@ int DDA(iftImage *img, iftVoxel p1, iftVoxel pn)
         v.x=ROUND(p.x);
         v.y=ROUND(p.y);
         v.z=ROUND(p.z);
+        idx = iftGetVoxelIndex(gc->scene, v);
 
-        if (isValidPoint(img,v)){
-
+        
+        if (gc->label->val[idx] != 0)
+        {
+            if (gc->object[gc->label->val[idx]].visibility != 0)
+            {
+                dist =sqrtf((p.x-Tp0.x)*(p.x-Tp0.x)+(p.y-Tp0.y)*(p.y-Tp0.y)+(p.z-Tp0.z)*(p.z-Tp0.z));
+                
+                N.x  = gc->phong->normal[gc->normal->val[idx]].x;
+                N.y  = gc->phong->normal[gc->normal->val[idx]].y;
+                N.z  = gc->phong->normal[gc->normal->val[idx]].z;
+                phong_val = PhongShading(gc, idx, N, dist);
+                *red   += phong_val * gc->object[gc->label->val[idx]].red;
+                *green += phong_val * gc->object[gc->label->val[idx]].green;
+                *blue  += phong_val * gc->object[gc->label->val[idx]].blue;
+            }
         }
+    
 
         p.x = p.x + dx;
         p.y = p.y + dy;
         p.z = p.z + dz;
     }
 
-    return (int)max;
+    if (*red < 0) *red = 0;
+    if (*green < 0) *green = 0;
+    if (*blue < 0) *blue = 0;
+    if (*red > 1) *red = 1;
+    if (*green > 1) *green = 1;
+    if (*blue > 1) *blue = 1;
+
+    //return (int)max;
 }
 
 iftVector *createNormalTable()
@@ -263,7 +280,8 @@ ObjectAttributes *createObjectAttr(iftImage *label, int *numberOfObjects)
     ObjectAttributes *object;
     *numberOfObjects = MaximumValue(label);
 
-    object = (ObjectAttributes *)calloc(*numberOfObjects + 1, sizeof(ObjectAttributes));
+    //object = (ObjectAttributes *)calloc(*numberOfObjects + 1, sizeof(ObjectAttributes));
+    object = (ObjectAttributes *)calloc(2 + 1, sizeof(ObjectAttributes));
 
     object[0].opacity    = 0;
     object[0].red        = 0;
@@ -289,6 +307,7 @@ void setSceneFaces(GraphicalContext *gc)
 {
     iftImage *scene = gc->scene;
 
+    printf("setting\n");
     gc->face[0].pos.x = scene->xsize / 2.0;
     gc->face[0].pos.y = scene->ysize / 2.0;
     gc->face[0].pos.z = 0;
@@ -329,7 +348,11 @@ void setSceneFaces(GraphicalContext *gc)
 
 }
 
-GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel)
+
+
+
+
+GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel, float tilt, float spin)
 {
     GraphicalContext *gc;
 
@@ -337,16 +360,27 @@ GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel)
 
     gc->scene          = iftCopyImage(scene);
     gc->phong          = createPhongModel(scene);
-    //gc->viewdir        = NULL;
+    
     gc->numberOfObjects= 0;
     gc->overall_opac   = 1.0;
     gc->face           = (Plane *) malloc(sizeof(Plane) * 6);
-    //setViewDir(gc, 0, 0);
     setSceneFaces(gc);
+
+    // computing transformations
+    iftVector v1 = {.x = (float)scene->xsize / 2.0, .y = (float)scene->ysize / 2.0, .z = (float)scene->zsize / 2.0};
+    iftMatrix *transMatrix1 = iftTranslationMatrix(v1);
+
+    iftMatrix *xRotMatrix = iftRotationMatrix(IFT_AXIS_X, -tilt);
+    iftMatrix *yRotMatrix = iftRotationMatrix(IFT_AXIS_Y, -spin);
+
+    float D = sqrt(scene->xsize*scene->xsize + scene->ysize*scene->ysize);
+    iftVector v2 = {.x = -(D / 2.0), .y = -(D / 2.0), .z = -(D / 2.0)};
+    iftMatrix *transMatrix2 = iftTranslationMatrix(v2);
+
+    gc->Tinv = iftMultMatricesChain(3, transMatrix1, xRotMatrix,yRotMatrix, transMatrix2);
 
     gc->label       = iftCopyImage(imageLabel);
     gc->object      = createObjectAttr(imageLabel, &gc->numberOfObjects);
-    //gc->surf_render = createSRBuffers(imageLabel);
 
     gc->opacity       = NULL;
     gc->normal        = NULL;
@@ -366,9 +400,9 @@ iftVector columnVectorMatrixToVector(iftMatrix *m)
 }
 
 
-iftVector columnVectorVoxelToVector(iftVoxel *m)
+iftVector columnVectorVoxelToVector(iftVoxel m)
 {
-    iftVector v = {.x = m->x, .y = m->y, .z = m->z};
+    iftVector v = {.x = m.x, .y = m.y, .z = m.z};
     v.x = iftAlmostZero(v.x) ? 0.0 : v.x;
     v.y = iftAlmostZero(v.y) ? 0.0 : v.y;
     v.z = iftAlmostZero(v.z) ? 0.0 : v.z;
@@ -386,18 +420,21 @@ int computeIntersection(GraphicalContext* gc, iftMatrix *Tpo, iftMatrix *Tn, ift
     float lambda, l1=9999999.9, ln=-9999999.9;
     float innerP = 0, innerPV=0;
     iftVector v1, v2, v3;
-    iftVoxel* V, P; 
+    iftVoxel V, P; 
 
     for (i = 0; i < 6; i++) {
         v1 = gc->face[i].normal;
+
         v2 = columnVectorMatrixToVector(Tn);
         innerP = iftVectorInnerProduct(v1,v2);
 
+        
+
         if (fabs(innerP) > 1E-04)
         {
-            V->x     = gc->face[i].pos.x - Tpo->val[0];
-            V->y     = gc->face[i].pos.y - Tpo->val[1];
-            V->z     = gc->face[i].pos.z - Tpo->val[2];
+            V.x     = gc->face[i].pos.x - Tpo->val[0];
+            V.y     = gc->face[i].pos.y - Tpo->val[1];
+            V.z     = gc->face[i].pos.z - Tpo->val[2];
 
             v3 = columnVectorVoxelToVector(V);
             innerPV = iftVectorInnerProduct(v1, v3);
@@ -459,11 +496,13 @@ iftImage* phongRender(GraphicalContext *gc)
     iftVoxel p1, pn;
     iftColor  RGB, YCbCr;
     float     r = 0.0, g = 0.0, b = 0.0;
-    iftMatrix* vec = iftCreateMatrix(1, 3);
+
+    iftMatrix* vec = iftCreateMatrix(1, 4);
 
     iftMatrixElem(vec, 0, 0) = 0;
     iftMatrixElem(vec, 0, 1) = 0;
     iftMatrixElem(vec, 0, 2) = 1;
+    iftMatrixElem(vec, 0, 3) = 0;
 
     iftMatrix* tVec = iftMultMatrices(gc->Tinv, vec);
     diagonal = sqrt((gc->scene->xsize * gc->scene->xsize) + (gc->scene->ysize * gc->scene->ysize) + (gc->scene->zsize * gc->scene->zsize));
@@ -473,7 +512,6 @@ iftImage* phongRender(GraphicalContext *gc)
     for (int p = 0; p < outputImage->n; p++)
     {
         
-        
         Mtemp = imagePixelToMatrix(outputImage,p);
         iftMatrixElem(Mtemp, 0, 2) = diagonal/2;
 
@@ -481,6 +519,7 @@ iftImage* phongRender(GraphicalContext *gc)
 
         if (computeIntersection(gc, Tpo, tVec, &p1, &pn))
         {
+            
 
             //DDA(gc, P0, P1, Pn, &red, &green, &blue);
 
@@ -511,15 +550,13 @@ int main(int argc, char *argv[])
 
     iftImage *img = iftReadImageByExt(imgFileName);
     iftImage *imgLabel = iftReadImageByExt(imgLabelFileName);
-    tilt = atof(argv[4]);
-    spin = atof(argv[5]);
 
+    tilt = atof(argv[3]);
+    spin = atof(argv[4]);
 
-
-    gc = createGC(img, imgLabel);
-
+    gc = createGC(img, imgLabel, tilt, spin);
     output   = phongRender(gc);
-    printf("Done!\n");
+    
     // sprintf(buffer, "data/%.1f%.1f%s", tx, ty, argv[2]);
 
 
