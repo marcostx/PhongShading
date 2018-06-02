@@ -129,7 +129,7 @@ float PhongShading(GraphicalContext *gc, int p, iftVector N, float dist)
     return phong_val;
 }
 
-void DDA(GraphicalContext* gc, iftVoxel Tp0, iftVoxel p1, iftVoxel pn, float* red, float* green, float* blue)
+void DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVoxel p1, iftVoxel pn, float* red, float* green, float* blue)
 {
     int n, k, idx;
     iftVoxel v;
@@ -184,7 +184,7 @@ void DDA(GraphicalContext* gc, iftVoxel Tp0, iftVoxel p1, iftVoxel pn, float* re
         {
             if (gc->object[gc->label->val[idx]].visibility != 0)
             {
-                dist =sqrtf((p.x-Tp0.x)*(p.x-Tp0.x)+(p.y-Tp0.y)*(p.y-Tp0.y)+(p.z-Tp0.z)*(p.z-Tp0.z));
+                dist =sqrtf((p.x-Tp0->val[0])*(p.x-Tp0->val[0])+(p.y-Tp0->val[1])*(p.y-Tp0->val[1])+(p.z-Tp0->val[2])*(p.z-Tp0->val[2]));
                 
                 N.x  = gc->phong->normal[gc->normal->val[idx]].x;
                 N.y  = gc->phong->normal[gc->normal->val[idx]].y;
@@ -428,10 +428,9 @@ int computeIntersection(GraphicalContext* gc, iftMatrix *Tpo, iftMatrix *Tn, ift
         v2 = columnVectorMatrixToVector(Tn);
         innerP = iftVectorInnerProduct(v1,v2);
 
-        
-
         if (fabs(innerP) > 1E-04)
         {
+
             V.x     = gc->face[i].pos.x - Tpo->val[0];
             V.y     = gc->face[i].pos.y - Tpo->val[1];
             V.z     = gc->face[i].pos.z - Tpo->val[2];
@@ -444,9 +443,9 @@ int computeIntersection(GraphicalContext* gc, iftMatrix *Tpo, iftMatrix *Tn, ift
             P.z = ROUND(Tpo->val[2] + lambda * Tn->val[2]);
             if (isValidPoint(gc->scene, P))
             {
-              if (lambda < l1)
+                if (lambda < l1)
                     l1 = lambda;
-              if (lambda > ln)
+                if (lambda > ln)
                     ln = lambda;
             }   
         }
@@ -454,7 +453,7 @@ int computeIntersection(GraphicalContext* gc, iftMatrix *Tpo, iftMatrix *Tn, ift
 
     if (l1 < ln)
     {
-
+        printf("entrou\n");
         p1->x = ROUND(Tpo->val[0] + l1 * Tn->val[0]);
         p1->y = ROUND(Tpo->val[1] + l1 * Tn->val[1]);
         p1->z = ROUND(Tpo->val[2] + l1 * Tn->val[2]);
@@ -519,9 +518,9 @@ iftImage* phongRender(GraphicalContext *gc)
 
         if (computeIntersection(gc, Tpo, tVec, &p1, &pn))
         {
-            
+            printf("passou\n");
 
-            //DDA(gc, P0, P1, Pn, &red, &green, &blue);
+            DDA(gc, Tpo, p1, pn, &r, &g, &b);
 
             RGB.val[0]     = (int)(255.0 * r);
             RGB.val[1]     = (int)(255.0 * g);
@@ -556,6 +555,7 @@ int main(int argc, char *argv[])
 
     gc = createGC(img, imgLabel, tilt, spin);
     output   = phongRender(gc);
+    printf("Done\n");
     
     // sprintf(buffer, "data/%.1f%.1f%s", tx, ty, argv[2]);
 
