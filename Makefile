@@ -1,4 +1,4 @@
-FLAGS = -fPIC -std=gnu11 -Wall -Wno-unused-result -pedantic
+FLAGS = -fPIC -std=gnu11 
 
 BIN = .
 
