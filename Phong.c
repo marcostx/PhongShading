@@ -203,10 +203,8 @@ void DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVoxel p1, iftVoxel pn, float* 
 
         idx = iftGetVoxelIndex(gc->scene, v);
         
-        
         if (gc->label->val[idx] != 0)
         {
-
             if (gc->object[gc->label->val[idx]].visibility != 0)
             {
 
@@ -227,7 +225,6 @@ void DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVoxel p1, iftVoxel pn, float* 
         p.y = p.y + dy;
         p.z = p.z + dz;
     }
-
     if (*red < 0) *red = 0;
     if (*green < 0) *green = 0;
     if (*blue < 0) *blue = 0;
@@ -327,61 +324,6 @@ ObjectAttributes *createObjectAttr(iftImage *label, int *numberOfObjects)
     return (object);
 }
 
-// void setSceneFaces(GraphicalContext *gc)
-// {
-//     iftImage *scene = gc->scene;
-
-//     gc->face[0].pos.x = scene->xsize / 2.0;
-//     gc->face[0].pos.y = scene->ysize / 2.0;
-//     gc->face[0].pos.z = -1;
-
-//     gc->face[1].pos.x = scene->xsize / 2.0;
-//     gc->face[1].pos.y = 0;
-//     gc->face[1].pos.z = scene->zsize / 2.0;
-
-//     gc->face[2].pos.x = 0;
-//     gc->face[2].pos.y = scene->ysize / 2.0;
-//     gc->face[2].pos.z = scene->zsize / 2.0;
-
-
-//     gc->face[3].pos.x = scene->xsize / 2.0;
-//     gc->face[3].pos.y = scene->ysize / 2.0;
-//     gc->face[3].pos.z = scene->zsize - 1;
-
-//     gc->face[4].pos.x = scene->xsize / 2.0;
-//     gc->face[4].pos.y = scene->ysize - 1;
-//     gc->face[4].pos.z = scene->zsize / 2.0;
-
-//     gc->face[5].pos.x = scene->xsize - 1;
-//     gc->face[5].pos.y = scene->ysize / 2.0;
-//     gc->face[5].pos.z = scene->zsize / 2.0;
-
-//     gc->face[0].normal.x =  0;
-//     gc->face[0].normal.y =  0;
-//     gc->face[0].normal.z = -1;
-
-//     gc->face[1].normal.x =  0;
-//     gc->face[1].normal.y =  -1;
-//     gc->face[1].normal.z =  0;
-
-//     gc->face[2].normal.x = -1;
-//     gc->face[2].normal.y =  0;
-//     gc->face[2].normal.z =  0;
-
-//     gc->face[3].normal.x =  0;
-//     gc->face[3].normal.y =  0;
-//     gc->face[3].normal.z =  1;
-
-//     gc->face[4].normal.x =  0;
-//     gc->face[4].normal.y =  1;
-//     gc->face[4].normal.z =  0;
-
-//     gc->face[5].normal.x =  1;
-//     gc->face[5].normal.y =  0;
-//     gc->face[5].normal.z =  0;
-
-// }
-
 iftVolumeFaces* createVF(GraphicalContext* gc){
     iftImage *scene = gc->scene;
     int Nx = scene->xsize;
@@ -466,6 +408,73 @@ iftVolumeFaces* createVF(GraphicalContext* gc){
 
 }
 
+int GetNormalIndex(iftVector N)
+{
+
+    int gamma, alpha, idx;
+
+    if ((N.x == 0.0) && (N.y == 0.0) && (N.z == 0.0))
+    {
+        return (0);
+    }
+
+    gamma = (int)(asin(N.z) * 180.0 / PI); 
+    alpha = (int)(atan2(N.y, N.x) * 180.0 / PI); 
+    if (alpha < 0)
+        alpha += 360;
+    idx = ((gamma + 90) * 360) + alpha + 1;
+
+    return idx;
+}
+
+// void computeNormals(GraphicalContext* gc)
+// {
+//     iftImage   *borders;
+//     iftAdjRel  *A   = iftSpheric(sqrtf(3.0));
+//     float      *mag = (float *) malloc(A->n*sizeof(float));
+//     float      diff;
+//     int        i, p, q, idx;
+//     iftVoxel   u, v;
+//     iftVector  N;
+
+//     // img borders
+//     borders    = iftObjectBorders(gc->label, A);
+
+//     gc->normal = iftCreateImage(gc->label->xsize, gc->label->ysize, gc->label->zsize);
+
+//     A   = iftSpheric(5.0);
+//     //for (i = 0; i < A->n; i++)
+//     //    mag[i] = sqrtf(A[i].dx * A[i].dx + A[i].dy * A[i].dy + A[i].dz * A[i].dz);
+
+//     for (int p=0; p < borders->n; p++) 
+//     {
+//         if (borders->val[p] != 0){
+//             u = iftGetVoxelCoord(gc->label, p);
+//             N.x = N.y = N.z = 0.0;
+
+//             for (i = 1; i < A->n; i++)
+//             {
+//                 v = iftGetAdjacentVoxel(A, u ,i);
+//                 if (isValidPoint(gc->label, v))
+//                 {
+//                     q = iftGetVoxelIndex(gc->label, v);
+//                     diff = gc->label->val[q] - gc->label->val[p];
+//                     //N.x  += diff * A[i].dx / mag[i];
+//                     //N.y  += diff * A[i].dy / mag[i];
+//                     //N.z  += diff * A[i].dz / mag[i];
+//                 }
+//             }
+//             N = iftNormalizeVector(N);
+//             N.x = -N.x; N.y = -N.y; N.z = -N.z;
+//             gc->normal->val[p] = GetNormalIndex(N);
+//         }
+//     }
+
+
+//     free(mag);
+//     iftDestroyAdjRel(&A);
+// }
+
 
 
 
@@ -498,8 +507,7 @@ GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel, float tilt, fl
     gc->label       = iftCopyImage(imageLabel);
     gc->object      = createObjectAttr(imageLabel, &gc->numberOfObjects);
 
-    gc->opacity       = NULL;
-    gc->normal        = NULL;
+    gc->opacity     = NULL;
 
     return (gc);
 }
@@ -539,7 +547,7 @@ int computeIntersection(GraphicalContext* gc, iftMatrix *Tpo, iftMatrix *Tn, ift
     iftVector v1, v2, v3;
     iftMatrix *V = iftCreateMatrix(1, 3);
     iftVoxel P; 
-
+    
     for (i = 0; i < 6; i++) {
         iftMatrixElem(Nj, 0, 0) = gc->faces[i].normal->val[0];
         iftMatrixElem(Nj, 0, 1) = gc->faces[i].normal->val[1];
@@ -585,6 +593,8 @@ int computeIntersection(GraphicalContext* gc, iftMatrix *Tpo, iftMatrix *Tn, ift
             }   
         }
     }
+    iftDestroyMatrix(&Nj);
+    iftDestroyMatrix(&V);
 
     if ((p1->x != -1) && (pn->x != -1)){
         //printf("%d %d \n", p1->x, pn->x);
@@ -666,9 +676,6 @@ iftImage* phongRender(GraphicalContext *gc)
             outputImage->val[p] = YCbCr.val[0];
             iftSetCb(outputImage, YCbCr.val[1]);
             iftSetCr(outputImage, YCbCr.val[2]);
-            //outputImage->Cb[p] = YCbCr.val[1];
-            //outputImage->Cr[p] = YCbCr.val[2];
-            //iftSetYCbCr(outputImage, p, YCbCr);
         }
     }
 
