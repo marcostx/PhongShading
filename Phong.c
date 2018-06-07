@@ -129,12 +129,12 @@ float PhongShading(GraphicalContext *gc, int p, iftVector N, float dist)
 
 
 
-float DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVoxel p1, iftVoxel pn)
+float DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVector p1, iftVector pn)
 {
     int n, k, idx;
     iftVoxel v;
-    iftVoxel p;
-    float max=0,J=0;
+    iftVector p;
+    float max=0,J=0.0;
     int Dx,Dy,Dz;
     float dx=0, dy=0, dz=0, phong_val, dist;
     iftVector N;
@@ -178,9 +178,9 @@ float DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVoxel p1, iftVoxel pn)
     //int validP=0;
     for (k = 1; k < n; k++)
     {
-        v.x=ROUND(p.x);
-        v.y=ROUND(p.y);
-        v.z=ROUND(p.z);
+        v.x=(int)p.x;
+        v.y=(int)p.y;
+        v.z=(int)p.z;
 
         idx = iftGetVoxelIndex(gc->scene, v);
 
@@ -188,13 +188,15 @@ float DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVoxel p1, iftVoxel pn)
         {
             if (gc->object[gc->label->val[idx]].visibility != 0)
             {
+                //return 1.;
                 dist =sqrtf((p.x-Tp0->val[0])*(p.x-Tp0->val[0])+(p.y-Tp0->val[1])*(p.y-Tp0->val[1])+(p.z-Tp0->val[2])*(p.z-Tp0->val[2]));
 
-                N.x  = gc->phong->normal[gc->normal->val[idx]].x;
-                N.y  = gc->phong->normal[gc->normal->val[idx]].y;
-                N.z  = gc->phong->normal[gc->normal->val[idx]].z;
+                N.x  = -gc->phong->normal[gc->normal->val[idx]].x;
+                N.y  = -gc->phong->normal[gc->normal->val[idx]].y;
+                N.z  = -gc->phong->normal[gc->normal->val[idx]].z;
                 phong_val = PhongShading(gc, idx, N, dist);
                 J += (float) phong_val;
+                break;
                 // *red   += phong_val * gc->object[gc->label->val[idx]].red;
                 // *green += phong_val * gc->object[gc->label->val[idx]].green;
                 // *blue  += phong_val * gc->object[gc->label->val[idx]].blue;
@@ -213,7 +215,6 @@ float DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVoxel p1, iftVoxel pn)
     // if (*red > 1) *red = 1;
     // if (*green > 1) *green = 1;
     // if (*blue > 1) *blue = 1;
-
 
     return J;
 }
@@ -520,7 +521,7 @@ GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel, float tilt, fl
     gc->label       = iftCopyImage(imageLabel);
     gc->object      = createObjectAttr(imageLabel, &gc->numberOfObjects);
 
-    gc->opacity     = NULL;
+    gc->opacity     = NULL; 
 
     computeNormals(gc);
 
@@ -550,18 +551,18 @@ iftVector columnVectorVoxelToVector(iftVoxel m)
 }
 
 
-int computeIntersection(GraphicalContext* gc, iftMatrix *Tpo, iftMatrix *Tn, iftVoxel *p1, iftVoxel *pn)
+int computeIntersection(GraphicalContext* gc, iftMatrix *Tpo, iftMatrix *Tn, iftVector *p1, iftVector *pn)
 {
 
     float max=-9999999.9, min=9999999.9;
     int i;
-    p1->x=pn->x=p1->y=pn->y,p1->z=pn->z=0;
+    p1->x=pn->x=p1->y=pn->y,p1->z=pn->z=-1.;
     float lambda, l1=9999999.9, ln=-9999999.9;
     float innerP = 0, innerPV=0;
     iftMatrix* Nj = iftCreateMatrix(1,3);
     iftVector v1, v2, v3;
     iftMatrix *V = iftCreateMatrix(1, 3);
-    iftVoxel P;
+    iftVector P;
 
     for (i = 0; i < 6; i++) {
         iftMatrixElem(Nj, 0, 0) = gc->faces[i].normal->val[0];
@@ -587,7 +588,11 @@ int computeIntersection(GraphicalContext* gc, iftMatrix *Tpo, iftMatrix *Tn, ift
             P.x = Tpo->val[0] + lambda * Tn->val[0];
             P.y = Tpo->val[1] + lambda * Tn->val[1];
             P.z = Tpo->val[2] + lambda * Tn->val[2];
-            if (isValidPoint(gc->scene, P))
+            iftVoxel test;
+            test.x = (int)P.x;
+            test.y = (int)P.y;
+            test.z = (int)P.z;
+            if (isValidPoint(gc->scene, test))
             {
                 if (lambda < min){
                     p1->x = P.x;
@@ -607,7 +612,7 @@ int computeIntersection(GraphicalContext* gc, iftMatrix *Tpo, iftMatrix *Tn, ift
     iftDestroyMatrix(&Nj);
     iftDestroyMatrix(&V);
 
-    if ((p1->x != -1) && (pn->x != -1)){
+    if ((p1->x != -1) && (pn->x != -1) && (min<max)){
         return 1;
     }
     else
@@ -636,7 +641,7 @@ iftImage* phongRender(GraphicalContext *gc)
     float intensity;
 
     iftMatrix *Mtemp,*Tpo;
-    iftVoxel p1, pn;
+    iftVector p1, pn;
     iftColor  RGB, YCbCr;
 
 
@@ -710,7 +715,7 @@ int main(int argc, char *argv[])
 
     iftImage *normalizedImage= iftNormalize(output,0,255);
 
-    iftWriteImageByExt(output, buffer);
+    iftWriteImageByExt(normalizedImage, buffer);
     iftDestroyImage(&img);
     iftDestroyImage(&output);
     return 0;
