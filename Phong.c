@@ -56,6 +56,7 @@ typedef struct gc {
   PhongModel       *phong;
   iftMatrix        *Tinv;
   iftVector        vDir;
+  iftImage         *tde;
   SRBuffers        *surf_render;
   iftImage         *scene;
   iftImage         *label;
@@ -118,7 +119,7 @@ float PhongShading(GraphicalContext *gc, int p, iftVector N, float dist)
         }
 
         phong_val = gc->phong->ka + gc->phong->Idist[(int)dist] * (gc->phong->kd * cos_ + gc->phong->ks * aux);
-        //phong_val = gc->phong->ka+ (1-(dist/maxDist)) * (gc->phong->kd * cos_ + gc->phong->ks * aux);
+        //phong_val = gc->phong->Idist[(int)dist] * gc->phong->kd * cos_;
 
         //printf("%f\n", phong_val);
     }
@@ -265,7 +266,7 @@ PhongModel *createPhongModel(iftImage *scene)
     phong->ndists = (int)(maxDist);
     phong->Idist  = (float *) malloc(phong->ndists*sizeof(float));
     for (int d = 0; d < phong->ndists; d++){
-        phong->Idist[d] = (float) (phong->ndists - d) / (float)phong->ndists;
+        phong->Idist[d] = (float)  d / (float)phong->ndists;
     }
 
     return (phong);
@@ -414,6 +415,55 @@ int GetNormalIndex(iftVector N)
     return idx;
 }
 
+void computeSceneNormal(GraphicalContext* gc)
+{
+    iftImage   *borders;
+    iftAdjRel  *A;
+
+    float      diff;
+    int        i, p, q, idx;
+    iftVoxel   u, v;
+    iftVector  N;
+    gc->normal = iftCreateImage(gc->scene->xsize, gc->scene->ysize, gc->scene->zsize);
+    A   = iftSpheric(3.0);
+    float      *mag = (float *) malloc(A->n*sizeof(float));
+    for (i = 0; i < A->n; i++)
+        mag[i] = sqrtf(A->dx[i] * A->dx[i] + A->dy[i] * A->dy[i] + A->dz[i] * A->dz[i]);
+
+    for (u.z = 0; u.z < gc->scene->zsize; u.z++)
+        for (u.y = 0; u.y < gc->scene->ysize; u.y++)
+            for (u.x = 0; u.x < gc->scene->xsize; u.x++)
+            {
+                  p = iftGetVoxelIndex(gc->scene, u);
+                  if (gc->label->val[p] != 0){
+                      N.x = N.y = N.z = 0.0;
+
+                      for (i = 1; i < A->n; i++)
+                      {
+                          v = iftGetAdjacentVoxel(A, u ,i);
+
+                          if (isValidPoint(gc->scene, v))
+                          {
+                              q = iftGetVoxelIndex(gc->scene, v);
+
+                              diff = gc->scene->val[q] - gc->scene->val[p];
+
+                              N.x  += diff * A->dx[i] / mag[i];
+                              N.y  += diff * A->dy[i] / mag[i];
+                              N.z  += diff * A->dz[i] / mag[i];
+                          }
+                      }
+                      N = iftNormalizeVector(N);
+
+                      N.x = -N.x; N.y = -N.y; N.z = -N.z;
+                      gc->normal->val[p] = GetNormalIndex(N);
+                  }
+            }
+
+    free(mag);
+    iftDestroyAdjRel(&A);
+}
+
 void computeNormals(GraphicalContext* gc)
 {
     iftImage   *borders;
@@ -428,7 +478,6 @@ void computeNormals(GraphicalContext* gc)
     borders    = iftObjectBorders(gc->label, A);
 
     gc->normal = iftCreateImage(gc->label->xsize, gc->label->ysize, gc->label->zsize);
-
     A   = iftSpheric(3.0);
     for (i = 0; i < A->n; i++)
         mag[i] = sqrtf(A->dx[i] * A->dx[i] + A->dy[i] * A->dy[i] + A->dz[i] * A->dz[i]);
@@ -437,18 +486,18 @@ void computeNormals(GraphicalContext* gc)
     {
 
         if (borders->val[p] != 0){
-            u = iftGetVoxelCoord(gc->label, p);
+            u = iftGetVoxelCoord(gc->tde, p);
             N.x = N.y = N.z = 0.0;
 
             for (i = 1; i < A->n; i++)
             {
                 v = iftGetAdjacentVoxel(A, u ,i);
 
-                if (isValidPoint(gc->label, v))
+                if (isValidPoint(gc->tde, v))
                 {
-                    q = iftGetVoxelIndex(gc->label, v);
+                    q = iftGetVoxelIndex(gc->tde, v);
 
-                    diff = gc->label->val[q] - gc->label->val[p];
+                    diff = gc->tde->val[q] - gc->tde->val[p];
 
                     N.x  += diff * A->dx[i] / mag[i];
                     N.y  += diff * A->dy[i] / mag[i];
@@ -479,7 +528,70 @@ void computeNormals(GraphicalContext* gc)
 }
 
 
+iftSet *ObjectBorders(iftImage *label)
+{
+  iftAdjRel *A;
+  iftSet    *B=NULL;
 
+    A = iftSpheric(1.0);
+
+  for (int p=0; p < label->n; p++) {
+    if (label->val[p] != 0){ // p is an object voxel
+      iftVoxel u = iftGetVoxelCoord(label,p);
+
+      for (int i=1; i < A->n; i++) {
+      	iftVoxel v = iftGetAdjacentVoxel(A,u,i);
+      	if (iftValidVoxel(label,v)){
+      	  int q = iftGetVoxelIndex(label,v);
+      	  if (label->val[q]!=label->val[p]){ // q belongs to another
+      					     // object/background,
+      					     // then p is border
+      	    iftInsertSet(&B,p);
+      	    break;
+  	      }
+  	     }else{ // p is at the border of the image, then it is border
+	         iftInsertSet(&B,p);
+	       break;
+	     }
+      }
+    }
+  }
+
+  iftDestroyAdjRel(&A);
+  return B;
+}
+
+
+void computeTDE(GraphicalContext *gc)
+{
+
+  iftAdjRel *A = iftSpheric(sqrtf(3.0));
+  iftSet    *B=ObjectBorders(gc->label);
+  iftImage  *tde, *root;
+  iftGQueue *Q;
+
+  tde    = iftCreateImage(gc->label->xsize, gc->label->ysize, gc->label->zsize);
+  root   = iftCreateImage(gc->label->xsize, gc->label->ysize, gc->label->zsize);
+  Q      = iftCreateGQueue(IFT_QSIZE, tde->n, tde->val);
+
+  for (int p=0; p < gc->label->n; p++)
+    if (gc->label->val[p]!=0)
+      tde->val[p] = IFT_INFINITY_INT;
+
+  while (B != NULL)
+  {
+    int p           = iftRemoveSet(&B);
+    root->val[p]    = p;
+    tde->val[p]     = 0;
+    iftInsertGQueue(&Q, p);
+  }
+
+  gc->tde=tde;
+
+  iftDestroyAdjRel(&A);
+  iftDestroyGQueue(&Q);
+  iftDestroyImage(&root);
+}
 
 GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel, float tilt, float spin)
 {
@@ -521,9 +633,10 @@ GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel, float tilt, fl
     gc->label       = iftCopyImage(imageLabel);
     gc->object      = createObjectAttr(imageLabel, &gc->numberOfObjects);
 
-    gc->opacity     = NULL; 
+    gc->opacity     = NULL;
 
-    computeNormals(gc);
+    //computeTDE(gc);
+    computeSceneNormal(gc);
 
     return (gc);
 }
@@ -574,11 +687,9 @@ int computeIntersection(GraphicalContext* gc, iftMatrix *Tpo, iftMatrix *Tn, ift
 
         if (innerP != 0)
         {
-
             iftMatrixElem(V, 0, 0)     = gc->faces[i].center->val[0] - Tpo->val[0];
             iftMatrixElem(V, 0, 1)     = gc->faces[i].center->val[1] - Tpo->val[1];
             iftMatrixElem(V, 0, 2)     = gc->faces[i].center->val[2] - Tpo->val[2];
-
 
             v3 = columnVectorMatrixToVector(V);
             innerPV = iftVectorInnerProduct(v1, v3);
