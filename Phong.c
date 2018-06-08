@@ -487,38 +487,40 @@ void computeNormals(GraphicalContext* gc)
 
         if (borders->val[p] != 0){
             u = iftGetVoxelCoord(gc->tde, p);
-            N.x = N.y = N.z = 0.0;
+            if (gc->label->val[p] != 0){
+                N.x = N.y = N.z = 0.0;
 
-            for (i = 1; i < A->n; i++)
-            {
-                v = iftGetAdjacentVoxel(A, u ,i);
-
-                if (isValidPoint(gc->tde, v))
+                for (i = 1; i < A->n; i++)
                 {
-                    q = iftGetVoxelIndex(gc->tde, v);
+                    v = iftGetAdjacentVoxel(A, u ,i);
 
-                    diff = gc->tde->val[q] - gc->tde->val[p];
+                    if (isValidPoint(gc->label, v))
+                    {
+                        q = iftGetVoxelIndex(gc->label, v);
 
-                    N.x  += diff * A->dx[i] / mag[i];
-                    N.y  += diff * A->dy[i] / mag[i];
-                    N.z  += diff * A->dz[i] / mag[i];
+                        diff = gc->tde->val[q] - gc->scene->val[p];
+
+                        N.x  += diff * A->dx[i] / mag[i];
+                        N.y  += diff * A->dy[i] / mag[i];
+                        N.z  += diff * A->dz[i] / mag[i];
+                    }
                 }
-            }
-            N = iftNormalizeVector(N);
-            // v.x = ROUND(u.x + N.x);
-            // v.y = ROUND(u.y + N.y);
-            // v.z = ROUND(u.z + N.z);
-            // if (isValidPoint(gc->label, v)) {
-            //     q = iftGetVoxelIndex(gc->label, v);
-            //
-            //     if (gc->label->val[q] != 0) {
-            //        N.x = -N.x;
-            //        N.y = -N.y;
-            //        N.z = -N.z;
-            //     }
-            // }
-            N.x = -N.x; N.y = -N.y; N.z = -N.z;
-            gc->normal->val[p] = GetNormalIndex(N);
+                N = iftNormalizeVector(N);
+                v.x = ROUND(u.x + N.x);
+                v.y = ROUND(u.y + N.y);
+                v.z = ROUND(u.z + N.z);
+                if (isValidPoint(gc->label, v)) {
+                    q = iftGetVoxelIndex(gc->label, v);
+
+                    if (gc->label->val[q] != 0) {
+                       N.x = -N.x;
+                       N.y = -N.y;
+                       N.z = -N.z;
+                    }
+                }
+                //N.x = -N.x; N.y = -N.y; N.z = -N.z;
+                gc->normal->val[p] = GetNormalIndex(N);
+           }
         }
     }
 
@@ -635,8 +637,9 @@ GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel, float tilt, fl
 
     gc->opacity     = NULL;
 
-    //computeTDE(gc);
-    computeSceneNormal(gc);
+    computeTDE(gc);
+    //computeSceneNormal(gc);
+    computeNormals(gc);
 
     return (gc);
 }
