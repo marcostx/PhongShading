@@ -22,7 +22,7 @@ typedef struct phong_model {
   float      ns;
   int        ndists;
   iftVector *normal;
-  float     *Idist;
+  float     *dephBuffer;
 } PhongModel;
 
 
@@ -40,24 +40,13 @@ typedef struct object_attr {
   char visibility;
 } ObjectAttributes;
 
-
-typedef struct _surface_rendering_buffers {
-  float  depth;
-  float  opacity;
-  int    voxel;
-  int    object;
-} SRBuffers;
-
 typedef struct gc {
   ObjectAttributes *object;
   int               numberOfObjects;
-  float             overall_opac;
-  char              proj_mode;
   PhongModel       *phong;
   iftMatrix        *Tinv;
   iftVector        vDir;
   iftImage         *tde;
-  SRBuffers        *surf_render;
   iftImage         *scene;
   iftImage         *label;
   iftVolumeFaces   *faces;
@@ -98,8 +87,6 @@ float PhongShading(GraphicalContext *gc, int p, iftVector N, float dist)
 
 
     cos_  =   iftVectorInnerProduct(gc->vDir, N);
-    //if (cos_ > 1.0)
-    //    cos_ = 1.0;
 
     arcos = acos(cos_);
     if (arcos <= PI/2 && arcos > 0)
@@ -118,10 +105,7 @@ float PhongShading(GraphicalContext *gc, int p, iftVector N, float dist)
           aux = 0.;
         }
 
-        phong_val = gc->phong->ka + gc->phong->Idist[(int)dist] * (gc->phong->kd * cos_ + gc->phong->ks * aux);
-        //phong_val = gc->phong->Idist[(int)dist] * gc->phong->kd * cos_;
-
-        //printf("%f\n", phong_val);
+        phong_val = gc->phong->ka + gc->phong->dephBuffer[(int)dist] * (gc->phong->kd * cos_ + gc->phong->ks * aux);
     }
 
     return phong_val;
@@ -198,9 +182,6 @@ float DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVector p1, iftVector pn)
                 phong_val = PhongShading(gc, idx, N, dist);
                 J += (float) phong_val;
                 break;
-                // *red   += phong_val * gc->object[gc->label->val[idx]].red;
-                // *green += phong_val * gc->object[gc->label->val[idx]].green;
-                // *blue  += phong_val * gc->object[gc->label->val[idx]].blue;
             }
         }
 
@@ -210,12 +191,7 @@ float DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVector p1, iftVector pn)
     }
     if (J > 1) J = 1;
     if (J < 0) J = 0;
-    // if (*red < 0) *red = 0;
-    // if (*green < 0) *green = 0;
-    // if (*blue < 0) *blue = 0;
-    // if (*red > 1) *red = 1;
-    // if (*green > 1) *green = 1;
-    // if (*blue > 1) *blue = 1;
+
 
     return J;
 }
@@ -261,12 +237,10 @@ PhongModel *createPhongModel(iftImage *scene)
     phong->ks     = 0.2;
     phong->ns     = 5.0;
     phong->normal = createNormalTable();
-    //phong->ndists = (int)(2 * diagonalSize(scene) + 1);
-    //phong->Idist  = (float *) malloc(phong->ndists*sizeof(float));
     phong->ndists = (int)(maxDist);
-    phong->Idist  = (float *) malloc(phong->ndists*sizeof(float));
+    phong->dephBuffer  = (float *) malloc(phong->ndists*sizeof(float));
     for (int d = 0; d < phong->ndists; d++){
-        phong->Idist[d] = (float)  d / (float)phong->ndists;
+        phong->dephBuffer[d] = (float)  d / (float)phong->ndists;
     }
 
     return (phong);
@@ -494,11 +468,11 @@ void computeNormals(GraphicalContext* gc)
                 {
                     v = iftGetAdjacentVoxel(A, u ,i);
 
-                    if (isValidPoint(gc->label, v))
+                    if (isValidPoint(borders, v))
                     {
-                        q = iftGetVoxelIndex(gc->label, v);
+                        q = iftGetVoxelIndex(borders, v);
 
-                        diff = gc->tde->val[q] - gc->scene->val[p];
+                        diff = gc->tde->val[q] - borders->val[p];
 
                         N.x  += diff * A->dx[i] / mag[i];
                         N.y  += diff * A->dy[i] / mag[i];
@@ -506,19 +480,8 @@ void computeNormals(GraphicalContext* gc)
                     }
                 }
                 N = iftNormalizeVector(N);
-                v.x = ROUND(u.x + N.x);
-                v.y = ROUND(u.y + N.y);
-                v.z = ROUND(u.z + N.z);
-                if (isValidPoint(gc->label, v)) {
-                    q = iftGetVoxelIndex(gc->label, v);
 
-                    if (gc->label->val[q] != 0) {
-                       N.x = -N.x;
-                       N.y = -N.y;
-                       N.z = -N.z;
-                    }
-                }
-                //N.x = -N.x; N.y = -N.y; N.z = -N.z;
+                N.x = -N.x; N.y = -N.y; N.z = -N.z;
                 gc->normal->val[p] = GetNormalIndex(N);
            }
         }
@@ -605,17 +568,16 @@ GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel, float tilt, fl
     gc->phong          = createPhongModel(scene);
 
     gc->numberOfObjects = 0;
-    gc->overall_opac    = 1.0;
     gc->faces           = createVF(gc);
 
     // computing transformations
-    iftVector v1 = {.x = (float)scene->xsize / 2.0, .y = (float)scene->ysize / 2.0, .z = (float)scene->zsize / 2.0};
+    iftVector v1 = {.x = gc->scene->xsize / 2.0, .y = gc->scene->ysize / 2.0, .z = gc->scene->zsize / 2.0};
     iftMatrix *transMatrix1 = iftTranslationMatrix(v1);
 
     iftMatrix *xRotMatrix = iftRotationMatrix(IFT_AXIS_X, -tilt);
     iftMatrix *yRotMatrix = iftRotationMatrix(IFT_AXIS_Y, -spin);
 
-    float D = sqrt(scene->xsize*scene->xsize + scene->ysize*scene->ysize + scene->zsize*scene->zsize);
+    int D = ROUND(sqrt(gc->scene->xsize*gc->scene->xsize + gc->scene->ysize*gc->scene->ysize + gc->scene->zsize*gc->scene->zsize));
     iftVector v2 = {.x = -(D / 2.0), .y = -(D / 2.0), .z = -(D / 2.0)};
     iftMatrix *transMatrix2 = iftTranslationMatrix(v2);
 
@@ -769,7 +731,6 @@ iftImage* phongRender(GraphicalContext *gc)
     iftMatrix* tVec = iftMultMatrices(gc->Tinv, vec);
     diagonal = sqrt((gc->scene->xsize * gc->scene->xsize) + (gc->scene->ysize * gc->scene->ysize) + (gc->scene->zsize * gc->scene->zsize));
     outputImage = iftCreateImage(diagonal, diagonal, 1);
-    //iftSetCbCr(outputImage, 128);
 
     for (int p = 0; p < outputImage->n; p++)
     {
@@ -784,20 +745,10 @@ iftImage* phongRender(GraphicalContext *gc)
         {
             intensity = DDA(gc, Tpo, p1, pn);
             outputImage->val[p] = (int)(255.0 * intensity);
-            //printf("%d %d %d\n", r,g,b);
-
-            // RGB.val[0]     = (int)(255.0*r);
-            // RGB.val[1]     = (int)(255.0*g);
-            // RGB.val[2]     = (int)(255.0*b);
-
-            // YCbCr          = RGBtoYCbCr(RGB);
-
-            // //iftSetYCbCr(outputImage,p,YCbCr);
-
-            // outputImage->val[p] = YCbCr.val[0];
-            // outputImage->Cb[p]  = YCbCr.val[1];
-            // outputImage->Cr[p]  = YCbCr.val[2];
         }
+
+        iftDestroyMatrix(&Mtemp);
+        iftDestroyMatrix(&Tpo);
     }
 
     return outputImage;
