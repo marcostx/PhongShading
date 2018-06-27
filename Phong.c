@@ -13,7 +13,8 @@
 #define GetVoxelIndex(s,v) ((v.x)+(s)->tby[(v.y)]+(s)->tbz[(v.z)])
 
 int RADIUS_THRESHOLD=2;
-int maxDist=164;
+int maxDist=180;
+int MAXDIST=0;
 
 typedef struct phong_model {
   float      ka;
@@ -51,7 +52,6 @@ typedef struct gc {
   iftImage         *label;
   iftVolumeFaces   *faces;
   iftImage         *normal;
-  iftImage         *opacity;
 } GraphicalContext;
 
 
@@ -110,8 +110,6 @@ float PhongShading(GraphicalContext *gc, int p, iftVector N, float dist)
 
     return phong_val;
 }
-
-
 
 
 float DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVector p1, iftVector pn)
@@ -174,8 +172,10 @@ float DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVector p1, iftVector pn)
             if (gc->object[gc->label->val[idx]].visibility != 0)
             {
                 //return 1.;
+                
                 dist =sqrtf((p.x-Tp0->val[0])*(p.x-Tp0->val[0])+(p.y-Tp0->val[1])*(p.y-Tp0->val[1])+(p.z-Tp0->val[2])*(p.z-Tp0->val[2]));
-
+                if (dist > MAXDIST)
+                  MAXDIST=dist;
                 N.x  = -gc->phong->normal[gc->normal->val[idx]].x;
                 N.y  = -gc->phong->normal[gc->normal->val[idx]].y;
                 N.z  = -gc->phong->normal[gc->normal->val[idx]].z;
@@ -441,7 +441,7 @@ void computeSceneNormal(GraphicalContext* gc)
 void computeNormals(GraphicalContext* gc)
 {
     iftImage   *borders;
-    iftAdjRel  *A   = iftSpheric(3.0);
+    iftAdjRel  *A   = iftSpheric(4.0);
     float      *mag = (float *) malloc(A->n*sizeof(float));
     float      diff;
     int        i, p, q, idx;
@@ -452,7 +452,7 @@ void computeNormals(GraphicalContext* gc)
     borders    = iftObjectBorders(gc->label, A);
 
     gc->normal = iftCreateImage(gc->label->xsize, gc->label->ysize, gc->label->zsize);
-    A   = iftSpheric(3.0);
+    A   = iftSpheric(4.0);
     for (i = 0; i < A->n; i++)
         mag[i] = sqrtf(A->dx[i] * A->dx[i] + A->dy[i] * A->dy[i] + A->dz[i] * A->dz[i]);
 
@@ -493,6 +493,7 @@ void computeNormals(GraphicalContext* gc)
 }
 
 
+
 iftSet *ObjectBorders(iftImage *label)
 {
   iftAdjRel *A;
@@ -505,19 +506,19 @@ iftSet *ObjectBorders(iftImage *label)
       iftVoxel u = iftGetVoxelCoord(label,p);
 
       for (int i=1; i < A->n; i++) {
-      	iftVoxel v = iftGetAdjacentVoxel(A,u,i);
-      	if (iftValidVoxel(label,v)){
-      	  int q = iftGetVoxelIndex(label,v);
-      	  if (label->val[q]!=label->val[p]){ // q belongs to another
-      					     // object/background,
-      					     // then p is border
-      	    iftInsertSet(&B,p);
-      	    break;
-  	      }
-  	     }else{ // p is at the border of the image, then it is border
-	         iftInsertSet(&B,p);
-	       break;
-	     }
+        iftVoxel v = iftGetAdjacentVoxel(A,u,i);
+        if (iftValidVoxel(label,v)){
+          int q = iftGetVoxelIndex(label,v);
+          if (label->val[q]!=label->val[p]){ // q belongs to another
+                     // object/ background,
+                     // then p is border
+            iftInsertSet(&B,p);
+            break;
+          }
+         }else{ // p is at the border of the image, then it is border
+           iftInsertSet(&B,p);
+         break;
+       }
       }
     }
   }
@@ -530,7 +531,7 @@ iftSet *ObjectBorders(iftImage *label)
 void computeTDE(GraphicalContext *gc)
 {
 
-  iftAdjRel *A = iftSpheric(sqrtf(3.0));
+  iftAdjRel *A = iftSpheric(1.0);
   iftSet    *B=ObjectBorders(gc->label);
   iftImage  *tde, *root;
   iftGQueue *Q;
@@ -549,6 +550,36 @@ void computeTDE(GraphicalContext *gc)
     root->val[p]    = p;
     tde->val[p]     = 0;
     iftInsertGQueue(&Q, p);
+  }
+
+  while (!iftEmptyGQueue(Q))
+  {
+    int p       = iftRemoveGQueue(Q);
+    iftVoxel u  = iftGetVoxelCoord(gc->label, p);
+    iftVoxel rp = iftGetVoxelCoord(gc->label,root->val[p]);
+
+    for (int i = 1; i < A->n; i++)
+    {
+      iftVoxel v = iftGetAdjacentVoxel(A, u, i);
+
+      if (iftValidVoxel(gc->label, v))
+      {
+        int q = iftGetVoxelIndex(gc->label, v);
+
+        if ((gc->label->val[q]==gc->label->val[p])&&(tde->val[q]>tde->val[p])){
+          int tmp = iftSquaredVoxelDistance(v,rp);
+          if (tmp < tde->val[q]) {
+            //if (tde->val[q] != IFT_INFINITY_INT)
+            if (Q->L.elem[q].color == IFT_GRAY){
+            iftRemoveGQueueElem(Q,q);
+            }
+            root->val[q]     = root->val[p];
+            tde->val[q]      = tmp;
+            iftInsertGQueue(&Q, q);
+          }
+        }
+      }
+    }
   }
 
   gc->tde=tde;
@@ -597,11 +628,9 @@ GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel, float tilt, fl
     gc->label       = iftCopyImage(imageLabel);
     gc->object      = createObjectAttr(imageLabel, &gc->numberOfObjects);
 
-    gc->opacity     = NULL;
-
-    computeTDE(gc);
-    //computeSceneNormal(gc);
-    computeNormals(gc);
+    //computeTDE(gc);
+    computeSceneNormal(gc);
+    //computeNormals(gc);
 
     return (gc);
 }
@@ -775,6 +804,7 @@ int main(int argc, char *argv[])
     gc = createGC(img, imgLabel, tilt, spin);
     output   = phongRender(gc);
     printf("Done\n");
+    printf("%d\n", MAXDIST);
 
     sprintf(buffer, "data/test3.png");
 
