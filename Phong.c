@@ -13,7 +13,7 @@
 #define GetVoxelIndex(s,v) ((v.x)+(s)->tby[(v.y)]+(s)->tbz[(v.z)])
 
 int RADIUS_THRESHOLD=2;
-int maxDist=180;
+int maxDist=90;
 int MAXDIST=0;
 
 typedef struct phong_model {
@@ -112,6 +112,8 @@ float PhongShading(GraphicalContext *gc, int p, iftVector N, float dist)
 }
 
 
+
+
 float DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVector p1, iftVector pn)
 {
     int n, k, idx;
@@ -172,7 +174,7 @@ float DDA(GraphicalContext* gc, iftMatrix* Tp0, iftVector p1, iftVector pn)
             if (gc->object[gc->label->val[idx]].visibility != 0)
             {
                 //return 1.;
-                
+
                 dist =sqrtf((p.x-Tp0->val[0])*(p.x-Tp0->val[0])+(p.y-Tp0->val[1])*(p.y-Tp0->val[1])+(p.z-Tp0->val[2])*(p.z-Tp0->val[2]));
                 if (dist > MAXDIST)
                   MAXDIST=dist;
@@ -429,7 +431,22 @@ void computeSceneNormal(GraphicalContext* gc)
                       }
                       N = iftNormalizeVector(N);
 
-                      N.x = -N.x; N.y = -N.y; N.z = -N.z;
+                      v.x = ROUND(u.x + N.x);
+                      v.y = ROUND(u.y + N.y);
+                      v.z = ROUND(u.z + N.z);
+
+                      if (iftValidVoxel(gc->scene, v))
+                      {
+                          q = iftGetVoxelIndex(gc->scene, v);
+                          if (gc->label->val[q] != 0)
+                          {
+                              N.x = -N.x;
+                              N.y = -N.y;
+                              N.z = -N.z;
+                          }
+                      }
+
+                      //N.x = -N.x; N.y = -N.y; N.z = -N.z;
                       gc->normal->val[p] = GetNormalIndex(N);
                   }
             }
@@ -441,7 +458,7 @@ void computeSceneNormal(GraphicalContext* gc)
 void computeNormals(GraphicalContext* gc)
 {
     iftImage   *borders;
-    iftAdjRel  *A   = iftSpheric(4.0);
+    iftAdjRel  *A   = iftSpheric(5.0);
     float      *mag = (float *) malloc(A->n*sizeof(float));
     float      diff;
     int        i, p, q, idx;
@@ -452,7 +469,7 @@ void computeNormals(GraphicalContext* gc)
     borders    = iftObjectBorders(gc->label, A);
 
     gc->normal = iftCreateImage(gc->label->xsize, gc->label->ysize, gc->label->zsize);
-    A   = iftSpheric(4.0);
+    A   = iftSpheric(5.0);
     for (i = 0; i < A->n; i++)
         mag[i] = sqrtf(A->dx[i] * A->dx[i] + A->dy[i] * A->dy[i] + A->dz[i] * A->dz[i]);
 
@@ -472,7 +489,7 @@ void computeNormals(GraphicalContext* gc)
                     {
                         q = iftGetVoxelIndex(borders, v);
 
-                        diff = gc->tde->val[q] - borders->val[p];
+                        diff = gc->tde->val[q] - gc->tde->val[p];
 
                         N.x  += diff * A->dx[i] / mag[i];
                         N.y  += diff * A->dy[i] / mag[i];
@@ -531,7 +548,7 @@ iftSet *ObjectBorders(iftImage *label)
 void computeTDE(GraphicalContext *gc)
 {
 
-  iftAdjRel *A = iftSpheric(1.0);
+  iftAdjRel *A = iftSpheric(sqrt(3.0));
   iftSet    *B=ObjectBorders(gc->label);
   iftImage  *tde, *root;
   iftGQueue *Q;
@@ -628,9 +645,9 @@ GraphicalContext *createGC(iftImage *scene, iftImage *imageLabel, float tilt, fl
     gc->label       = iftCopyImage(imageLabel);
     gc->object      = createObjectAttr(imageLabel, &gc->numberOfObjects);
 
-    //computeTDE(gc);
-    computeSceneNormal(gc);
-    //computeNormals(gc);
+    computeTDE(gc);
+    //computeSceneNormal(gc);
+    computeNormals(gc);
 
     return (gc);
 }
@@ -798,15 +815,16 @@ int main(int argc, char *argv[])
     iftImage *img = iftReadImageByExt(imgFileName);
     iftImage *imgLabel = iftReadImageByExt(imgLabelFileName);
 
-    tilt = atof(argv[3]);
-    spin = atof(argv[4]);
+    tilt = atof(argv[4]);
+    spin = atof(argv[5]);
 
     gc = createGC(img, imgLabel, tilt, spin);
     output   = phongRender(gc);
     printf("Done\n");
     printf("%d\n", MAXDIST);
 
-    sprintf(buffer, "data/test3.png");
+    //sprintf(buffer, "data/test3.png");
+    sprintf(buffer, "data/%.1f%.1f%s", tilt, spin, argv[3]);
 
     iftImage *normalizedImage= iftNormalize(output,0,255);
 
